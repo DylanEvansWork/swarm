@@ -90,7 +90,7 @@ const UPGRADES = [
   {n:'Piercing',    d:'bullets go through +1', f:p=>p.pierce++,       ok:p=>p.pierce<4},
   {n:'Boots',       d:'+10% move speed',       f:p=>p.spd*=1.1,       ok:p=>p.spd<290},
   {n:'Magnet',      d:'+50% pickup range',     f:p=>p.magnet*=1.5,    ok:p=>p.magnet<260},
-  {n:'Vitality',    d:'+25 max HP, heal 25',   f:p=>{p.max+=25;p.hp=Math.min(p.max,p.hp+25)}, ok:p=>p.max<300},
+  {n:'Vitality',    d:'+20 max HP, heal 20',   f:p=>{p.max+=20;p.hp=Math.min(p.max,p.hp+20)}, ok:p=>p.max<190},
   {n:'Orbit Blade', d:'+1 spinning blade',     f:p=>p.blades++,       ok:p=>p.blades<5},
   {n:'Shockwave',   d:'bigger, faster pulse',  f:p=>p.nova++,         ok:p=>p.nova<5},
   {n:'Fast Bullets',d:'+25% bullet speed',     f:p=>p.bspd*=1.25,     ok:p=>p.bspd<900},
@@ -113,7 +113,7 @@ const me=()=>players.find(p=>p.id===myId);
 const pushEv=e=>evq.push(e);
 
 function makePlayer(id,c,n){
-  return {id,c,n,x:0,y:0,vx:0,vy:0,dx:0,dy:0,hp:100,max:100,spd:210,r:10,inv:0,fireCd:0,rate:2.6,dmg:10,multi:1,pierce:0,
+  return {id,c,n,x:0,y:0,vx:0,vy:0,dx:0,dy:0,hp:70,max:70,spd:210,r:10,inv:0,fireCd:0,rate:2.6,dmg:10,multi:1,pierce:0,
           bspd:520,magnet:80,blades:0,ang:0,nova:0,novaCd:3,dead:false,reviveT:0,rv:0,pc:null};
 }
 function addPlayer(id){
@@ -252,7 +252,7 @@ function spawnEnemy(ti,x,y,hpScale=1){
   const T=TYPELIST[ti], hpm=(1+t/30+(t/150)**2)*hpScale, c=clampArena(x,y,T.r+4);
   const hp=T.hp*hpm*(ti===3?.8:1);
   enemies.push({id:++eid,type:T.name,ti,x:c.x,y:c.y,r:T.r,hp,max:hp,spd:T.spd*rnd(.9,1.1)*(1+Math.min(t/300,.5)),
-                dmg:T.dmg*(1+t/240),xp:T.xp,col:T.col,flash:0,kx:0,ky:0,bladeCd:0,
+                dmg:T.dmg*(1+t/110),xp:T.xp,col:T.col,flash:0,kx:0,ky:0,bladeCd:0,
                 st:0,tm:0,cd:rnd(.5,2.5),cd2:6,dx:0,dy:0,dir:Math.random()<.5?1:-1,aux:0,ang:0});
 }
 function hurtEnemy(e,dmg,dx,dy,kb){
@@ -290,8 +290,8 @@ function simWorld(dt){
     const inP=inPool(p), sm=inP?.55:1, k=Math.min(1,dt*14);
     p.vx+=(p.dx*p.spd*sm-p.vx)*k; p.vy+=(p.dy*p.spd*sm-p.vy)*k; p.x+=p.vx*dt; p.y+=p.vy*dt; p.inv-=dt;
     pushOut(p);
-    if(inP){ hurtPlayer(p,(7+t/25)*dt); if(p.dead) continue; }
-    for(const q of shrines) if((p.x-q.x)**2+(p.y-q.y)**2<q.r*q.r){ p.hp=Math.min(p.max,p.hp+4*dt); break; }
+    if(inP){ hurtPlayer(p,(9+t/18)*dt); if(p.dead) continue; }
+    for(const q of shrines) if((p.x-q.x)**2+(p.y-q.y)**2<q.r*q.r){ p.hp=Math.min(p.max,p.hp+2.2*dt); break; }
 
     p.fireCd-=dt;
     if(p.fireCd<=0 && enemies.length){
@@ -403,7 +403,7 @@ function simWorld(dt){
     const k=Math.exp(-7*dt); e.kx*=k; e.ky*=k;
     pushOut(e);
     if(tg.inv<=0 && Math.hypot(tg.x-e.x,tg.y-e.y)<e.r+tg.r){
-      tg.inv=.7; hurtPlayer(tg,e.dmg);
+      tg.inv=.55; hurtPlayer(tg,e.dmg);
       pushEv(['ph',rd(tg.x),rd(tg.y),tg.id]);
       if(e.ti!==6){e.kx=-ux*300; e.ky=-uy*300;}
     }
@@ -434,7 +434,7 @@ function simWorld(dt){
     if(d<p.magnet){const sp=300+(p.magnet-d)*6; g.x+=gx/d*sp*dt; g.y+=gy/d*sp*dt;}
     if(d<p.r+8){
       g.got=true;
-      if(g.heart){p.hp=Math.min(p.max,p.hp+15);pushEv(['heal',rd(p.x),rd(p.y)]);}
+      if(g.heart){p.hp=Math.min(p.max,p.hp+10);pushEv(['heal',rd(p.x),rd(p.y)]);}
       else{xp+=g.v;pushEv(['gp',p.id]);}
     }
   }
