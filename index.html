@@ -884,7 +884,9 @@ function joinParty(code){
   peer.on('open',id=>{
     myId=id;
     hostConn=peer.connect('swarm-'+code,{serialization:'json',reliable:true});
-    to=setTimeout(()=>fail("Couldn't reach that party. Wrong code?"),15000);
+    to=setTimeout(()=>fail("Couldn't reach that party. Check the code, and that you both have the latest version (hard refresh)."),15000);
+    const pcn=hostConn.peerConnection;
+    if(pcn) pcn.addEventListener('iceconnectionstatechange',()=>{ if(pcn.iceConnectionState==='failed') fail("Found the party but couldn't open a connection. Try the same wifi, or turn off VPN / school filters."); });
     hostConn.on('open',()=>{
       clearTimeout(to); isHost=false; screen='game'; state='lobby'; players=[]; syncMenu();
       setInterval(()=>{ if(hostConn.open&&state!=='lobby'){const i=getInput();hostConn.send({t:'in',dx:+i.dx.toFixed(2),dy:+i.dy.toFixed(2)});} },33);
