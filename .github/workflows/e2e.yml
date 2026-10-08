@@ -1,0 +1,19 @@
+name: E2E (live site, two browsers)
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: Site URL to test
+        default: https://dylanevanswork.github.io/swarm/
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm i --no-save playwright@1.48.2
+      - run: npx playwright install --with-deps chromium
+      - run: node e2e/e2e.mjs "${{ inputs.url }}"
