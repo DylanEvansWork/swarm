@@ -92,7 +92,7 @@ const TYPELIST = [
   {name:'boss',   r:46, hp:700, spd:38,  dmg:30, xp:0, col:'#ff2fd0'},
 ];
 const ARENA=1700;
-const needXp=(l,np)=>Math.floor((4+3.2*l+.5*l*l)*(1+.5*(np-1)));
+const needXp=(l,np)=>Math.floor((6+5.5*l+.9*l*l)*(1+.5*(np-1)));
 const COLS = [[125,255,178],[94,230,255],[255,210,63],[255,159,69],[217,139,255],[255,122,184]];
 const css = c => `rgb(${COLS[c%6]})`;
 const REV = 2.5;
@@ -151,7 +151,7 @@ let screen='menu', state='menu';          // state: lobby | play | levelup | dea
 let isHost=true, myId='h', partyCode='', peer=null, hostConn=null; const conns={};
 let players=[], enemies=[], bullets=[], ebullets=[], gems=[], parts=[], texts=[], rings=[];
 let grenades=[], fires=[], turrets=[], slashes=[], bolts=[], solo=false;
-let mapSeed=0, obst=[], pools=[], shrines=[], decor=[], nextBoss=60;
+let mapSeed=0, obst=[], pools=[], shrines=[], decor=[], walls=[], nextBoss=60, fieldT=0;
 let t=0, kills=0, xp=0, next=5, lvl=1, spawnAcc=0, nextWave=30, pickT=0, eid=0, plCount=0;
 let shake=0, banner='', bannerT=0, streak=0, streakT=0, deadAt=0;
 let evq=[], netBuf=[];
@@ -187,7 +187,7 @@ function resetWorld(){
   enemies=[];bullets=[];ebullets=[];gems=[];parts=[];texts=[];rings=[];grenades=[];fires=[];turrets=[];slashes=[];bolts=[];
   t=0;kills=0;xp=0;lvl=1;spawnAcc=0;nextWave=30;nextBoss=60;streak=0;eid=0;
   next=needXp(1,players.length);
-  genMap(1+Math.floor(Math.random()*1e9));
+  genMap(1+Math.floor(Math.random()*1e9)); buildGrid(); fieldT=0;
   players=players.map((p,i)=>{
     const q=makePlayer(p.id,p.c,p.n); if(p.sty>=0) applyStyle(q,p.sty); const a=i/players.length*6.283; q.x=Math.cos(a)*30*(players.length>1?1:0); q.y=Math.sin(a)*30*(players.length>1?1:0); return q;
   });
@@ -195,30 +195,50 @@ function resetWorld(){
 
 // ================= map =================
 function mulberry(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+const CELL=340, WT=40, GAP=140;
+function circleNearWall(x,y,r){
+  for(const w of walls){ const cx=Math.max(w.x,Math.min(x,w.x+w.w)), cy=Math.max(w.y,Math.min(y,w.y+w.h)); if((x-cx)**2+(y-cy)**2<r*r) return true; }
+  return false;
+}
 function genMap(seed){
-  mapSeed=seed; const R=mulberry(seed); obst=[]; pools=[]; shrines=[]; decor=[];
-  for(let n=0;n<400&&obst.length<46;n++){
-    const r=28+R()*48, a=R()*6.283, d=Math.sqrt(R())*(ARENA-140);
-    const x=Math.cos(a)*d, y=Math.sin(a)*d;
-    if(d<260) continue;
-    if(obst.some(o=>Math.hypot(o.x-x,o.y-y)<o.r+r+110)) continue;
-    obst.push({x,y,r});
+  mapSeed=seed; const R=mulberry(seed); obst=[]; pools=[]; shrines=[]; decor=[]; walls=[];
+  const K=Math.ceil(ARENA/CELL);
+  // corridor lattice: every lattice edge may hold a wall, always with one doorway
+  for(let i=-K;i<=K;i++) for(let j=-K;j<K;j++){
+    const x=i*CELL, y0=j*CELL, md=Math.hypot(x,y0+CELL/2), roll=R(), gp=40+R()*(CELL-80-GAP);
+    if(md<420||md>ARENA-130||roll>.74) continue;
+    walls.push({x:x-WT/2,y:y0,w:WT,h:gp},{x:x-WT/2,y:y0+gp+GAP,w:WT,h:CELL-gp-GAP});
   }
-  for(let n=0;n<200&&pools.length<7;n++){
+  for(let j=-K;j<=K;j++) for(let i=-K;i<K;i++){
+    const y=j*CELL, x0=i*CELL, md=Math.hypot(x0+CELL/2,y), roll=R(), gp=40+R()*(CELL-80-GAP);
+    if(md<420||md>ARENA-130||roll>.74) continue;
+    walls.push({x:x0,y:y-WT/2,w:gp,h:WT},{x:x0+gp+GAP,y:y-WT/2,w:CELL-gp-GAP,h:WT});
+  }
+  for(let n=0;n<600&&obst.length<16;n++){
+    const r=26+R()*22, a=R()*6.283, d=Math.sqrt(R())*(ARENA-160), x=Math.cos(a)*d, y=Math.sin(a)*d;
+    if(d<280||circleNearWall(x,y,r+55)||obst.some(o=>Math.hypot(o.x-x,o.y-y)<o.r+r+160)) continue;
+    obst.push({x,y,r,v:R()});
+  }
+  let crates=0;
+  for(let n=0;n<1200&&crates<48;n++){   // crates: cover, kept clear of doorways
+    const a=R()*6.283, d=Math.sqrt(R())*(ARENA-150), x=Math.cos(a)*d, y=Math.sin(a)*d;
+    if(d<300||circleNearWall(x,y,118)||obst.some(o=>Math.hypot(o.x-x,o.y-y)<o.r+60)) continue;
+    walls.push({x:x-23,y:y-23,w:46,h:46,crate:true}); crates++;
+  }
+  for(let n=0;n<400&&pools.length<7;n++){
     const r=70+R()*45, a=R()*6.283, d=Math.sqrt(R())*(ARENA-200), x=Math.cos(a)*d, y=Math.sin(a)*d;
     if(d<340) continue;
-    if(obst.some(o=>Math.hypot(o.x-x,o.y-y)<o.r+r+20)||pools.some(o=>Math.hypot(o.x-x,o.y-y)<o.r+r+80)) continue;
+    if(circleNearWall(x,y,r+14)||obst.some(o=>Math.hypot(o.x-x,o.y-y)<o.r+r+20)||pools.some(o=>Math.hypot(o.x-x,o.y-y)<o.r+r+80)) continue;
     pools.push({x,y,r});
   }
-  for(let n=0;n<200&&shrines.length<3;n++){
+  for(let n=0;n<400&&shrines.length<3;n++){
     const a=R()*6.283, d=420+R()*820, x=Math.cos(a)*d, y=Math.sin(a)*d;
-    if(obst.some(o=>Math.hypot(o.x-x,o.y-y)<o.r+110)||pools.some(o=>Math.hypot(o.x-x,o.y-y)<o.r+110)||shrines.some(o=>Math.hypot(o.x-x,o.y-y)<500)) continue;
+    if(circleNearWall(x,y,90)||obst.some(o=>Math.hypot(o.x-x,o.y-y)<o.r+110)||pools.some(o=>Math.hypot(o.x-x,o.y-y)<o.r+110)||shrines.some(o=>Math.hypot(o.x-x,o.y-y)<500)) continue;
     shrines.push({x,y,r:62});
   }
-  for(const o of obst){ o.v=R(); }
-  for(let n=0;n<900&&decor.length<300;n++){
+  for(let n=0;n<1200&&decor.length<300;n++){
     const a=R()*6.283, d=Math.sqrt(R())*(ARENA-90), x=Math.cos(a)*d, y=Math.sin(a)*d, z=R(), sz=.7+R()*.8;
-    if(obst.some(o=>Math.hypot(o.x-x,o.y-y)<o.r+10)||pools.some(o=>Math.hypot(o.x-x,o.y-y)<o.r)) continue;
+    if(circleNearWall(x,y,16)||obst.some(o=>Math.hypot(o.x-x,o.y-y)<o.r+10)||pools.some(o=>Math.hypot(o.x-x,o.y-y)<o.r)) continue;
     let k;
     if(d<600) k=z<.35?3:z<.7?2:z<.85?1:0;
     else if(d<1250) k=z<.35?0:z<.6?4:z<.85?2:1;
@@ -226,13 +246,115 @@ function genMap(seed){
     decor.push({x,y,k,s:sz,a:R()*6.283});
   }
 }
-function pushOut(o){   // o has x,y,r: keep inside the arena and out of pillars
+function pushOut(o){   // keep inside the arena, out of pillars and walls
   for(const b of obst){
     const dx=o.x-b.x, dy=o.y-b.y, m=b.r+o.r, d2=dx*dx+dy*dy;
     if(d2<m*m){const d=Math.sqrt(d2)||1; o.x=b.x+dx/d*m; o.y=b.y+dy/d*m;}
   }
+  for(const w of walls){
+    if(o.x<w.x-o.r||o.x>w.x+w.w+o.r||o.y<w.y-o.r||o.y>w.y+w.h+o.r) continue;
+    const cx=Math.max(w.x,Math.min(o.x,w.x+w.w)), cy=Math.max(w.y,Math.min(o.y,w.y+w.h)), dx=o.x-cx, dy=o.y-cy, d2=dx*dx+dy*dy;
+    if(d2<o.r*o.r){
+      if(d2>1e-6){const d=Math.sqrt(d2); o.x=cx+dx/d*o.r; o.y=cy+dy/d*o.r;}
+      else{const l=o.x-w.x, r=w.x+w.w-o.x, tp=o.y-w.y, bt=w.y+w.h-o.y, m=Math.min(l,r,tp,bt);
+        if(m===l) o.x=w.x-o.r; else if(m===r) o.x=w.x+w.w+o.r; else if(m===tp) o.y=w.y-o.r; else o.y=w.y+w.h+o.r;}
+    }
+  }
   const d=Math.hypot(o.x,o.y), lim=ARENA-o.r;
   if(d>lim){o.x*=lim/d;o.y*=lim/d;}
+}
+function hitsWall(x,y,r){
+  for(const w of walls) if(x>w.x-r&&x<w.x+w.w+r&&y>w.y-r&&y<w.y+w.h+r) return true;
+  return false;
+}
+function los(x0,y0,x1,y1){
+  const minx=Math.min(x0,x1)-2, maxx=Math.max(x0,x1)+2, miny=Math.min(y0,y1)-2, maxy=Math.max(y0,y1)+2, dx=x1-x0, dy=y1-y0;
+  for(const w of walls){
+    if(w.x>maxx||w.x+w.w<minx||w.y>maxy||w.y+w.h<miny) continue;
+    let t0=0,t1=1;
+    if(Math.abs(dx)<1e-9){ if(x0<w.x||x0>w.x+w.w) continue; }
+    else{ let a=(w.x-x0)/dx, b=(w.x+w.w-x0)/dx; if(a>b){const q=a;a=b;b=q;} if(a>t0)t0=a; if(b<t1)t1=b; if(t0>t1) continue; }
+    if(Math.abs(dy)<1e-9){ if(y0<w.y||y0>w.y+w.h) continue; }
+    else{ let a=(w.y-y0)/dy, b=(w.y+w.h-y0)/dy; if(a>b){const q=a;a=b;b=q;} if(a>t0)t0=a; if(b<t1)t1=b; if(t0>t1) continue; }
+    return false;
+  }
+  const L2=dx*dx+dy*dy||1;
+  for(const o of obst){
+    let u=((o.x-x0)*dx+(o.y-y0)*dy)/L2; u=u<0?0:u>1?1:u;
+    const px=x0+dx*u-o.x, py=y0+dy*u-o.y; if(px*px+py*py<o.r*o.r) return false;
+  }
+  return true;
+}
+// ---- host-only: navigation grid + per-player flow fields ----
+const GC=50, GNN=Math.ceil(2*ARENA/GC), NB8=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+let blocked=null; const QUEUE=new Int32Array(GNN*GNN);
+function buildGrid(){
+  blocked=new Uint8Array(GNN*GNN);
+  const cell=(g)=>-ARENA+g*GC+GC/2;
+  for(let gy=0;gy<GNN;gy++)for(let gx=0;gx<GNN;gx++) if(Math.hypot(cell(gx),cell(gy))>ARENA-20) blocked[gy*GNN+gx]=1;
+  const INF=14;
+  for(const w of walls){
+    const gx0=Math.max(0,Math.floor((w.x-INF+ARENA)/GC)), gx1=Math.min(GNN-1,Math.floor((w.x+w.w+INF+ARENA)/GC));
+    const gy0=Math.max(0,Math.floor((w.y-INF+ARENA)/GC)), gy1=Math.min(GNN-1,Math.floor((w.y+w.h+INF+ARENA)/GC));
+    for(let gy=gy0;gy<=gy1;gy++)for(let gx=gx0;gx<=gx1;gx++){
+      const cx=cell(gx), cy=cell(gy);
+      if(cx>w.x-INF&&cx<w.x+w.w+INF&&cy>w.y-INF&&cy<w.y+w.h+INF) blocked[gy*GNN+gx]=1;
+    }
+  }
+  for(const o of obst){
+    const gx0=Math.max(0,Math.floor((o.x-o.r-INF+ARENA)/GC)), gx1=Math.min(GNN-1,Math.floor((o.x+o.r+INF+ARENA)/GC));
+    const gy0=Math.max(0,Math.floor((o.y-o.r-INF+ARENA)/GC)), gy1=Math.min(GNN-1,Math.floor((o.y+o.r+INF+ARENA)/GC));
+    for(let gy=gy0;gy<=gy1;gy++)for(let gx=gx0;gx<=gx1;gx++) if(Math.hypot(cell(gx)-o.x,cell(gy)-o.y)<o.r+INF) blocked[gy*GNN+gx]=1;
+  }
+}
+function openAt(x,y){
+  const gx=((x+ARENA)/GC)|0, gy=((y+ARENA)/GC)|0;
+  return gx>=0&&gy>=0&&gx<GNN&&gy<GNN&&!blocked[gy*GNN+gx];
+}
+function computeField(p){
+  const dist=p.field||(p.field=new Uint16Array(GNN*GNN)); dist.fill(65535);
+  const gx=Math.max(0,Math.min(GNN-1,((p.x+ARENA)/GC)|0)), gy=Math.max(0,Math.min(GNN-1,((p.y+ARENA)/GC)|0));
+  let h=0,tl=0; const s0=gy*GNN+gx; dist[s0]=0; QUEUE[tl++]=s0;
+  while(h<tl){
+    const c=QUEUE[h++], cx=c%GNN, d=dist[c]+1;
+    if(cx>0&&!blocked[c-1]&&dist[c-1]===65535){dist[c-1]=d;QUEUE[tl++]=c-1;}
+    if(cx<GNN-1&&!blocked[c+1]&&dist[c+1]===65535){dist[c+1]=d;QUEUE[tl++]=c+1;}
+    if(c>=GNN&&!blocked[c-GNN]&&dist[c-GNN]===65535){dist[c-GNN]=d;QUEUE[tl++]=c-GNN;}
+    if(c<GNN*GNN-GNN&&!blocked[c+GNN]&&dist[c+GNN]===65535){dist[c+GNN]=d;QUEUE[tl++]=c+GNN;}
+  }
+}
+function pickTarget(e){
+  const gx=((e.x+ARENA)/GC)|0, gy=((e.y+ARENA)/GC)|0, ok=gx>=0&&gy>=0&&gx<GNN&&gy<GNN;
+  let best=null,bd=1e12;
+  for(const p of players){
+    if(p.dead||p.sty<0) continue;
+    const eu=Math.hypot(e.x-p.x,e.y-p.y); let d=eu;
+    if(ok&&p.field){const v=p.field[gy*GNN+gx]; d=v===65535?1e6+eu:v*GC;}
+    if(d<bd){bd=d;best=p;}
+  }
+  return best;
+}
+function pathDir(e,tg){
+  const f=tg.field; if(!f) return null;
+  const gx=((e.x+ARENA)/GC)|0, gy=((e.y+ARENA)/GC)|0; if(gx<0||gy<0||gx>=GNN||gy>=GNN) return null;
+  let best=f[gy*GNN+gx], bx=0, by=0;
+  for(const [ox,oy] of NB8){
+    const nx=gx+ox, ny=gy+oy; if(nx<0||ny<0||nx>=GNN||ny>=GNN) continue;
+    const nd=f[ny*GNN+nx]; if(nd>=best) continue;
+    if(ox&&oy&&(blocked[gy*GNN+nx]||blocked[ny*GNN+gx])) continue;
+    best=nd;bx=ox;by=oy;
+  }
+  if(!bx&&!by) return null;
+  const dx=-ARENA+(gx+bx)*GC+GC/2-e.x, dy=-ARENA+(gy+by)*GC+GC/2-e.y, d=Math.hypot(dx,dy)||1;
+  return {x:dx/d,y:dy/d};
+}
+function nearestVisible(x,y,maxD){
+  const c=[], m2=maxD*maxD;
+  for(const e of enemies){ if(e.hp<=0) continue; const d=(e.x-x)**2+(e.y-y)**2; if(d<m2) c.push([d,e]); }
+  if(!c.length) return null;
+  c.sort((a,b)=>a[0]-b[0]);
+  for(let i=0;i<Math.min(c.length,8);i++) if(los(x,y,c[i][1].x,c[i][1].y)) return c[i][1];
+  return null;
 }
 function inPool(p){ for(const q of pools) if((p.x-q.x)**2+(p.y-q.y)**2<q.r*q.r) return true; return false; }
 function clampArena(x,y,m){ const d=Math.hypot(x,y), lim=ARENA-m; return d>lim?{x:x*lim/d,y:y*lim/d}:{x,y}; }
@@ -352,11 +474,20 @@ function nearestAlive(x,y){
   return b;
 }
 function spawnEnemy(ti,x,y,hpScale=1){
-  const T=TYPELIST[ti], hpm=(1+t/30+(t/150)**2)*hpScale, c=clampArena(x,y,T.r+4);
+  const T=TYPELIST[ti], c=clampArena(x,y,T.r+4);
+  const el=(ti!==6&&Math.random()<Math.min(.2,Math.max(0,(t-40)/800)))?1:0;
+  const hpm=(1+t/30+(t/150)**2)*(1+.06*(lvl-1))*hpScale*(el?2.4:1);
   const hp=T.hp*hpm*(ti===3?.8:1);
-  enemies.push({id:++eid,type:T.name,ti,x:c.x,y:c.y,r:T.r,hp,max:hp,spd:T.spd*rnd(.9,1.1)*(1+Math.min(t/300,.5)),
-                dmg:T.dmg*(1+t/110),xp:T.xp,col:T.col,flash:0,kx:0,ky:0,bladeCd:0,
-                st:0,tm:0,cd:rnd(.5,2.5),cd2:6,dx:0,dy:0,dir:Math.random()<.5?1:-1,aux:0,ang:0});
+  enemies.push({id:++eid,type:T.name,ti,el,x:c.x,y:c.y,r:T.r*(el?1.22:1),hp,max:hp,spd:T.spd*rnd(.9,1.1)*(1+Math.min(t/300,.5))*(el?1.12:1),
+                dmg:T.dmg*(1+t/110)*(el?1.3:1),xp:T.xp*(el?3:1),col:T.col,flash:0,kx:0,ky:0,bladeCd:0,
+                st:0,tm:0,cd:rnd(.5,2.5),cd2:6,dx:0,dy:0,dir:Math.random()<.5?1:-1,aux:0,ang:0,pathT:0,pd:null,tg:null});
+}
+function spawnNear(ti,tp,dist,hs){
+  for(let k=0;k<8;k++){
+    const a=Math.random()*6.283, x=tp.x+Math.cos(a)*dist, y=tp.y+Math.sin(a)*dist;
+    if(openAt(x,y)){ spawnEnemy(ti,x,y,hs); return true; }
+  }
+  return false;
 }
 function hurtEnemy(e,dmg,dx,dy,kb,src){
   if(e.ti===6) kb*=.06;
@@ -382,6 +513,7 @@ function simWorld(dt){
   if(!al.length){gameOver();return;}
   t+=dt;
   const np=players.length;
+  fieldT-=dt; if(fieldT<=0){fieldT=.25; for(const p of al) computeField(p);}
 
   // ---- players ----
   for(const p of players){
@@ -405,7 +537,7 @@ function simWorld(dt){
     p.fireCd-=dt;
     const S=p.sty;
     if(S===0&&p.fireCd<=0){                       // GUNNER
-      const tg=nearestEnemy(p.x,p.y,640);
+      const tg=nearestVisible(p.x,p.y,640);
       if(tg){
         p.fireCd=1/p.rate;
         const base=Math.atan2(tg.y-p.y,tg.x-p.x);
@@ -436,7 +568,7 @@ function simWorld(dt){
         for(let i=0;i<p.u.throwb;i++){const a=ang+(i-(p.u.throwb-1)/2)*.28; bullets.push({x:p.x,y:p.y,vx:Math.cos(a)*620,vy:Math.sin(a)*620,pierce:3,hit:new Set(),life:.8,dmg:p.dmg*1.1,c:p.c,src:p});}
       }
     } else if(S===3){                              // STORM
-      if(p.fireCd<=0){ const first=nearestEnemy(p.x,p.y,500); if(first){ p.fireCd=1/p.rate; zap(p,first); } }
+      if(p.fireCd<=0){ const first=nearestVisible(p.x,p.y,500); if(first){ p.fireCd=1/p.rate; zap(p,first); } }
       if(p.u.storm){
         p.stormCd-=dt;
         if(p.stormCd<=0){
@@ -451,7 +583,7 @@ function simWorld(dt){
       for(let i=0;i<n;i++){
         p.dcd[i]=(p.dcd[i]||0)-dt;
         if(p.dcd[i]>0) continue;
-        const a=p.ang+i/n*6.283, ox=p.x+Math.cos(a)*68, oy=p.y+Math.sin(a)*68, tg=nearestEnemy(ox,oy,460);
+        const a=p.ang+i/n*6.283, ox=p.x+Math.cos(a)*68, oy=p.y+Math.sin(a)*68, tg=nearestVisible(ox,oy,460);
         if(tg){
           p.dcd[i]=interval+rnd(0,.1);
           const ba=Math.atan2(tg.y-oy,tg.x-ox);
@@ -505,7 +637,7 @@ function simWorld(dt){
   for(const tr of turrets){
     tr.life-=dt; tr.cd-=dt;
     if(tr.cd<=0){
-      const tg=nearestEnemy(tr.x,tr.y,420);
+      const tg=nearestVisible(tr.x,tr.y,420);
       if(tg){ tr.cd=.35; const a=Math.atan2(tg.y-tr.y,tg.x-tr.x); bullets.push({x:tr.x,y:tr.y,vx:Math.cos(a)*600,vy:Math.sin(a)*600,pierce:0,hit:new Set(),life:.8,dmg:tr.dmg,c:tr.c,src:tr.src}); }
       else tr.cd=.15;
     }
@@ -516,6 +648,7 @@ function simWorld(dt){
   for(const b of bullets){
     b.x+=b.vx*dt;b.y+=b.vy*dt;b.life-=dt;
     for(const o of obst) if((b.x-o.x)**2+(b.y-o.y)**2<o.r*o.r){b.life=0;break;}
+    if(b.life>0&&hitsWall(b.x,b.y,3)) b.life=0;
     if(b.life<=0) continue;
     for(const e of enemies){
       if(b.hit.has(e)) continue;
@@ -537,6 +670,7 @@ function simWorld(dt){
   for(const b of ebullets){
     b.x+=b.vx*dt;b.y+=b.vy*dt;b.life-=dt;
     for(const o of obst) if((b.x-o.x)**2+(b.y-o.y)**2<o.r*o.r){b.life=0;break;}
+    if(b.life>0&&hitsWall(b.x,b.y,4)) b.life=0;
     if(b.life<=0) continue;
     for(const p of al){
       if(p.dead||p.inv>0) continue;
@@ -548,35 +682,38 @@ function simWorld(dt){
   ebullets=ebullets.filter(b=>b.life>0);
 
   // ---- spawning ----
-  const cap=Math.min(420,260+80*np), mult=1+.65*(al.length-1);
+  const cap=Math.min(420,260+80*np), mult=(1+.65*(al.length-1))*(1+.03*(lvl-1));
   spawnAcc+=dt*(1.6+t/9)*mult;
   while(spawnAcc>=1 && enemies.length<cap){
     spawnAcc--;
-    const tp=al[Math.floor(Math.random()*al.length)], a=Math.random()*6.283;
-    spawnEnemy(pickType(),tp.x+Math.cos(a)*720,tp.y+Math.sin(a)*720);
+    spawnNear(pickType(),al[Math.floor(Math.random()*al.length)],720,1);
   }
   if(spawnAcc>6) spawnAcc=6;
   if(t>=nextWave){
     nextWave+=30; pushEv(['wave']);
     const tp=al[Math.floor(Math.random()*al.length)], n=Math.floor((24+t/6)*(1+.5*(al.length-1)));
-    for(let i=0;i<n;i++){const a=i/n*6.283; spawnEnemy(t>90&&i%5==0?2:0,tp.x+Math.cos(a)*540,tp.y+Math.sin(a)*540);}
+    for(let i=0;i<n;i++){const a=i/n*6.283, x=tp.x+Math.cos(a)*540, y=tp.y+Math.sin(a)*540; if(openAt(x,y)) spawnEnemy(t>90&&i%5==0?2:0,x,y);}
   }
   if(t>=nextBoss){
     nextBoss+=75; pushEv(['bossin']);
-    const tp=al[Math.floor(Math.random()*al.length)], a=Math.random()*6.283;
-    spawnEnemy(6,tp.x+Math.cos(a)*620,tp.y+Math.sin(a)*620,1.4*(1+.7*(np-1)));
+    spawnNear(6,al[Math.floor(Math.random()*al.length)],620,1.4*(1+.7*(np-1)));
   }
 
   // ---- enemies ----
   for(const e of enemies){
     e.bladeCd-=dt; e.flash-=dt;
-    const tg=nearestAlive(e.x,e.y); if(!tg) continue;
+    e.pathT-=dt;
+    if(!e.tg||e.tg.dead||e.pathT<=0){
+      e.pathT=.2+Math.random()*.12; e.tg=pickTarget(e);
+      e.pd=(e.tg&&!los(e.x,e.y,e.tg.x,e.tg.y))?pathDir(e,e.tg):null;
+    }
+    const tg=e.tg; if(!tg) continue;
     const ex=tg.x-e.x, ey=tg.y-e.y, d=Math.hypot(ex,ey)||1, ux=ex/d, uy=ey/d;
     let mx=ux, my=uy, sp=e.spd*(e.slow>0?.45:1); if(e.slow>0) e.slow-=dt; e.aux=0;
     if(e.ti===3){            // shooter: keeps its distance and fires
       if(d<230){mx=-ux;my=-uy;} else if(d<320){mx=-uy*e.dir;my=ux*e.dir;sp*=.6;}
       e.cd-=dt;
-      if(e.cd<=0&&d<620){e.cd=2.3;ebullets.push({x:e.x,y:e.y,vx:ux*250,vy:uy*250,life:4,dmg:e.dmg*1.3});}
+      if(e.cd<=0&&d<620&&los(e.x,e.y,tg.x,tg.y)){e.cd=2.3;ebullets.push({x:e.x,y:e.y,vx:ux*250,vy:uy*250,life:4,dmg:e.dmg*1.3});}
     } else if(e.ti===4){     // charger: telegraphs, locks on, dashes
       if(e.st===0){e.cd-=dt; if(e.cd<=0&&d<440){e.st=1;e.tm=.75;}}
       else if(e.st===1){sp=0;e.aux=1;e.tm-=dt;e.dx=ux;e.dy=uy;if(e.tm<=0){e.st=2;e.tm=.5;}}
@@ -585,6 +722,13 @@ function simWorld(dt){
       e.cd-=dt; e.cd2-=dt; e.ang+=dt;
       if(e.cd<=0){e.cd=2.6;const n=16;for(let i=0;i<n;i++){const a=e.ang+i/n*6.283;ebullets.push({x:e.x,y:e.y,vx:Math.cos(a)*200,vy:Math.sin(a)*200,life:5,dmg:e.dmg*.7});}}
       if(e.cd2<=0){e.cd2=9;for(let i=0;i<8;i++){const a=i/8*6.283;spawnEnemy(0,e.x+Math.cos(a)*80,e.y+Math.sin(a)*80,.8);}}
+    }
+    const usesPath=e.ti===0||e.ti===1||e.ti===2||e.ti===5||e.ti===6||(e.ti===3&&d>=320)||(e.ti===4&&e.st===0);
+    if(usesPath&&e.pd){mx=e.pd.x;my=e.pd.y;}
+    else if((e.ti===0||e.ti===1)&&t>30){   // cutting you off: lead the target, fast ones flank
+      const L=Math.min(.7,(t-30)/120); let ax=tg.x+tg.vx*L-e.x, ay=tg.y+tg.vy*L-e.y;
+      if(e.ti===1&&d>260){ax+=-uy*e.dir*150;ay+=ux*e.dir*150;}
+      const am=Math.hypot(ax,ay)||1; mx=ax/am; my=ay/am;
     }
     e.x+=(mx*sp+e.kx)*dt; e.y+=(my*sp+e.ky)*dt;
     const k=Math.exp(-7*dt); e.kx*=k; e.ky*=k;
@@ -623,7 +767,7 @@ function simWorld(dt){
     if(d<p.r+8){
       g.got=true;
       if(g.heart){p.hp=Math.min(p.max,p.hp+10);pushEv(['heal',rd(p.x),rd(p.y)]);}
-      else{xp+=g.v;pushEv(['gp',p.id]);}
+      else{xp+=g.v/(1+.035*(lvl-1));pushEv(['gp',p.id]);}
     }
   }
   gems=gems.filter(g=>!g.got);
@@ -667,7 +811,7 @@ const CODE_CHARS='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const genCode=()=>Array.from({length:4},()=>CODE_CHARS[Math.floor(Math.random()*CODE_CHARS.length)]).join('');
 
 function snapshot(){
-  const en=[]; for(const e of enemies) en.push(e.id,rd(e.x),rd(e.y),e.ti,e.flash>0?1:0,Math.max(0,rd(100*e.hp/e.max)),e.aux);
+  const en=[]; for(const e of enemies) en.push(e.id,rd(e.x),rd(e.y),e.ti,e.flash>0?1:0,Math.max(0,rd(100*e.hp/e.max)),e.aux,e.el);
   const gr=[]; for(const q of grenades) gr.push(rd(q.x),rd(q.y),rd(q.k*100));
   const fz=[]; for(const q of fires) fz.push(rd(q.x),rd(q.y),rd(q.r));
   const tu=[]; for(const q of turrets) tu.push(rd(q.x),rd(q.y),q.c);
@@ -770,10 +914,10 @@ function onClientData(s){
   }
   players=np;
   const olde=new Map(enemies.map(e=>[e.id,e])), ne=[], a=s.en;
-  for(let i=0;i<a.length;i+=7){
+  for(let i=0;i<a.length;i+=8){
     const T=TYPELIST[a[i+3]]; let e=olde.get(a[i]);
-    if(!e) e={id:a[i],x:a[i+1],y:a[i+2],type:T.name,ti:a[i+3],r:T.r,col:T.col};
-    e.tx=a[i+1];e.ty=a[i+2];e.flash=a[i+4]?1:0;e.hp=a[i+5];e.max=100;e.aux=a[i+6];
+    if(!e) e={id:a[i],x:a[i+1],y:a[i+2],type:T.name,ti:a[i+3],r:T.r*(a[i+7]?1.22:1),col:T.col};
+    e.tx=a[i+1];e.ty=a[i+2];e.flash=a[i+4]?1:0;e.hp=a[i+5];e.max=100;e.aux=a[i+6];e.el=a[i+7];
     ne.push(e);
   }
   enemies=ne;
@@ -1023,6 +1167,25 @@ function drawMap(C,vw,vh){
   }
   ctx.strokeStyle='rgba(255,60,90,.55)';ctx.lineWidth=3;ctx.beginPath();ctx.arc(0,0,ARENA,0,6.283);ctx.stroke();
 
+  // walls and crates
+  for(const w of walls){
+    if(w.x>Rr||w.x+w.w<L||w.y>Bt||w.y+w.h<Tp) continue;
+    ctx.fillStyle='rgba(0,0,0,.42)';ctx.fillRect(w.x+7,w.y+9,w.w,w.h);
+    if(w.crate){
+      ctx.fillStyle='#5a3d22';ctx.fillRect(w.x,w.y,w.w,w.h);
+      ctx.strokeStyle='#92653a';ctx.lineWidth=3;ctx.strokeRect(w.x+2,w.y+2,w.w-4,w.h-4);
+      ctx.beginPath();ctx.moveTo(w.x+5,w.y+5);ctx.lineTo(w.x+w.w-5,w.y+w.h-5);ctx.moveTo(w.x+w.w-5,w.y+5);ctx.lineTo(w.x+5,w.y+w.h-5);ctx.stroke();
+    } else {
+      const gr=ctx.createLinearGradient(w.x,w.y,w.x+w.w,w.y+w.h);gr.addColorStop(0,'#3a3c68');gr.addColorStop(1,'#202244');
+      ctx.fillStyle=gr;ctx.fillRect(w.x,w.y,w.w,w.h);
+      ctx.strokeStyle='rgba(0,0,0,.3)';ctx.lineWidth=2;ctx.beginPath();
+      if(w.w>w.h){for(let x=w.x+55;x<w.x+w.w-10;x+=55){ctx.moveTo(x,w.y);ctx.lineTo(x,w.y+w.h);}}
+      else{for(let y=w.y+55;y<w.y+w.h-10;y+=55){ctx.moveTo(w.x,y);ctx.lineTo(w.x+w.w,y);}}
+      ctx.stroke();
+      ctx.strokeStyle='rgba(175,185,255,.6)';ctx.lineWidth=2.5;ctx.strokeRect(w.x+1,w.y+1,w.w-2,w.h-2);
+    }
+  }
+
   // ruined pillars
   for(const o of obst){
     if(!vis(o.x,o.y,o.r+20)) continue;
@@ -1070,6 +1233,7 @@ function draw(){
       ctx.beginPath();for(let i=0;i<16;i++){const a=i/16*6.283+tt,rr=i%2?e.r*.8:e.r*1.25;ctx.lineTo(e.x+Math.cos(a)*rr,e.y+Math.sin(a)*rr);}ctx.closePath();ctx.fill();
       ctx.fillStyle='#1a0a1a';ctx.beginPath();ctx.arc(e.x,e.y,e.r*.45,0,6.283);ctx.fill();
     } else { ctx.beginPath();ctx.arc(e.x,e.y,e.r,0,6.283);ctx.fill(); }
+    if(e.el){ctx.strokeStyle='#ffd23f';ctx.lineWidth=3;ctx.beginPath();ctx.arc(e.x,e.y,e.r+4,0,6.283);ctx.stroke();}
     if(e.ti===2&&e.hp<e.max){ctx.fillStyle='rgba(0,0,0,.5)';ctx.fillRect(e.x-e.r,e.y-e.r-8,e.r*2,4);ctx.fillStyle='#fff';ctx.fillRect(e.x-e.r,e.y-e.r-8,e.r*2*e.hp/e.max,4);}
   }
   for(const g of grenades){   // grenades in flight: shadow + arced body
@@ -1206,6 +1370,7 @@ function drawHUD(){
     ctx.strokeStyle='rgba(255,60,90,.7)';ctx.lineWidth=2;ctx.stroke();
     ctx.fillStyle='rgba(90,255,120,.35)';for(const q of pools){ctx.beginPath();ctx.arc(mx+q.x*sc,my+q.y*sc,Math.max(2,q.r*sc),0,6.283);ctx.fill();}
     ctx.fillStyle='rgba(94,230,255,.8)';for(const q of shrines){ctx.beginPath();ctx.arc(mx+q.x*sc,my+q.y*sc,3,0,6.283);ctx.fill();}
+    ctx.fillStyle='rgba(150,160,255,.45)';for(const w of walls) if(!w.crate) ctx.fillRect(mx+w.x*sc,my+w.y*sc,Math.max(1,w.w*sc),Math.max(1,w.h*sc));
     ctx.fillStyle='rgba(150,160,255,.5)';for(const o of obst){ctx.beginPath();ctx.arc(mx+o.x*sc,my+o.y*sc,Math.max(1.2,o.r*sc),0,6.283);ctx.fill();}
     ctx.fillStyle='rgba(255,90,110,.55)';for(const e of enemies) if(e.ti!==6) ctx.fillRect(mx+e.x*sc-1,my+e.y*sc-1,2,2);
     if(boss){ctx.fillStyle='#ff2fd0';ctx.beginPath();ctx.arc(mx+boss.x*sc,my+boss.y*sc,4,0,6.283);ctx.fill();}
