@@ -82,6 +82,7 @@ const note = n => 261.63*Math.pow(2,n/12);
 const pent = [0,2,4,7,9,12,14,16,19,21,24,26,28];
 let lastKillSnd = 0, lastGemSnd = 0, lastBoomSnd = 0, lastZapSnd = 0;
 
+let VERSION='2026-10-09-c';
 // ================= data =================
 const TYPELIST = [
   {name:'chaser', r:11, hp:18,  spd:72,  dmg:10, xp:1, col:'#ff4d6d'},
@@ -113,6 +114,10 @@ const UPGRADES=[
   U(-1,'Heavy Hitter','+25% damage',p=>p.dmg*=1.25,p=>p.dmg<60),
   U(-1,'Overclock','+20% attack speed',p=>p.rate*=1.2,p=>p.rate<p.r0*2.4),
   U(-1,'Shockwave','pulse that blasts enemies away',p=>p.nova++,p=>p.nova<5),
+  U(-1,'Critical Strikes','12% chance for triple damage (any attack)',p=>p.u.crit+=.12,p=>p.u.crit<.6),
+  U(-1,'Volatile','your hits sometimes explode',p=>p.u.volatile++,p=>p.u.volatile<3),
+  U(-1,'Chain Reaction','enemies you kill explode',p=>p.u.chain++,p=>p.u.chain<3),
+  U(-1,'Multicast',s=>['+1 projectile per volley','+1 grenade per throw','+1 thrown blade per slash','+1 extra lightning bolt','+1 attack drone'][s],p=>{switch(p.sty){case 0:p.multi++;break;case 1:p.u.gren++;break;case 2:p.u.throwb++;break;case 3:p.u.dual++;break;case 4:p.drones++;break;}},p=>[p.multi<6,p.u.gren<6,p.u.throwb<4,p.u.dual<2,p.drones<7][p.sty]),
   U(-1,'Regeneration','regain +0.7 HP every second',p=>p.u.regen++,p=>p.u.regen<3),
   U(-1,'Life Siphon','heal a little on every kill',p=>p.u.siph++,p=>p.u.siph<3),
   U(-1,'Quick Dash','dash recharges 25% faster',p=>p.u.qdash++,p=>p.u.qdash<3),
@@ -139,12 +144,10 @@ const UPGRADES=[
   U(0,'Ricochet','bullets bounce to a new enemy',p=>p.u.ric++,p=>p.u.ric<3),
   U(0,'Explosive Rounds','bullets blow up on impact',p=>p.u.expl++,p=>p.u.expl<3),
   U(0,'Fast Bullets','+25% bullet speed',p=>p.bspd*=1.25,p=>p.bspd<900),
-  U(0,'Crit Rounds','+15% chance of triple damage',p=>p.u.crit+=.15,p=>p.u.crit<.5),
   // bomber
   U(1,'Cluster Bomb','+1 grenade per throw',p=>p.u.gren++,p=>p.u.gren<5),
   U(1,'Big Bang','+25% blast radius',p=>p.u.blast++,p=>p.u.blast<4),
   U(1,'Napalm','grenades leave burning ground',p=>p.u.napalm++,p=>p.u.napalm<3),
-  U(1,'Chain Reaction','enemies killed by blasts explode',p=>p.u.chain++,p=>p.u.chain<3),
   U(1,'Shrapnel','blasts spray bullets',p=>p.u.frag++,p=>p.u.frag<3),
   // blade
   U(2,'Orbit Blade','+1 spinning blade',p=>p.blades++,p=>p.blades<5),
@@ -184,7 +187,7 @@ const rd=Math.round;
 const me=()=>players.find(p=>p.id===myId);
 const pushEv=e=>evq.push(e);
 
-function freshU(){return {ric:0,expl:0,crit:0,gren:1,blast:0,napalm:0,chain:0,frag:0,reach:0,arc:0,leech:0,armor:0,throwb:0,zap:4,frost:0,storm:0,cond:0,over:0,dfire:0,dpierce:0,turret:0,repair:0,regen:0,siph:0,qdash:0,sdash:0,vit:0,gwell:0,chrono:0,aegis:0,second:0,orbital:0,frenzy:0,berserk:0,fortune:0,glass:0,reroll:2,railgun:0,carpet:0,bladestorm:0,tempest:0,hive:0};}
+function freshU(){return {ric:0,expl:0,crit:0,gren:1,blast:0,napalm:0,chain:0,frag:0,reach:0,arc:0,leech:0,armor:0,throwb:0,zap:4,frost:0,storm:0,cond:0,over:0,dfire:0,dpierce:0,turret:0,repair:0,regen:0,siph:0,qdash:0,sdash:0,vit:0,dual:0,volatile:0,gwell:0,chrono:0,aegis:0,second:0,orbital:0,frenzy:0,berserk:0,fortune:0,glass:0,reroll:2,railgun:0,carpet:0,bladestorm:0,tempest:0,hive:0};}
 function makePlayer(id,c,n){
   return {id,c,n,sty:-1,x:0,y:0,vx:0,vy:0,dx:0,dy:0,hp:70,max:70,spd:210,r:10,inv:0,fireCd:0,rate:2.6,r0:2.6,dmg:10,multi:1,pierce:0,
           bspd:520,magnet:80,blades:0,drones:0,ang:0,nova:0,novaCd:3,stormCd:2,turCd:3,dcd:[],dead:false,reviveT:0,respT:10,rv:0,pc:null,u:freshU(),dashCd:0,dashMax:2.4,dashT:0,dashX:1,dashY:0,lastDx:1,lastDy:0,dashHit:null,sinceHit:0,shield:false,aegisCd:0,chronoT:0,chCd:6,gwCd:5,orbCd:4,frenzyN:0,frenzyT:0,frenzyHold:0,spinT:0,bsCd:3,spinTick:0,volley:0,rareLvl:false};
@@ -562,10 +565,16 @@ function spawnNear(ti,tp,dist,hs){
 }
 function hurtEnemy(e,dmg,dx,dy,kb,src){
   if(e.ti===6) kb*=.06;
+  let crit=0;
+  if(src&&src.u){
+    if(src.u.crit&&Math.random()<src.u.crit){ dmg*=3; crit=1; }
+    if(src.u.chain>0) e.boomBy=src;
+    if(src.u.volatile&&Math.random()<.14*src.u.volatile) explode(e.x,e.y,55,dmg*.7,null,{skip:e});
+  }
   e.hp-=dmg; e.flash=.12;
   if(src&&src.u.leech&&!src.dead) src.hp=Math.min(src.max,src.hp+.12*src.u.leech);
   const d=Math.hypot(dx,dy)||1; e.kx+=dx/d*kb; e.ky+=dy/d*kb;
-  if(evq.length<60) pushEv(['h',rd(e.x),rd(e.y-e.r),rd(dmg)]);
+  if(evq.length<60) pushEv(['h',rd(e.x),rd(e.y-e.r),rd(dmg),crit]);
 }
 
 function hurtPlayer(p,dmg,dot){
@@ -638,8 +647,8 @@ function simWorld(dt){
         p.fireCd=1/rateOf(p);
         const base=Math.atan2(tg.y-p.y,tg.x-p.x);
         for(let i=0;i<p.multi;i++){
-          const a=base+(i-(p.multi-1)/2)*.17, crit=Math.random()<p.u.crit;
-          bullets.push({x:p.x,y:p.y,vx:Math.cos(a)*p.bspd,vy:Math.sin(a)*p.bspd,pierce:p.pierce,hit:new Set(),life:1.35,dmg:p.dmg*(crit?3:1),c:p.c,ric:p.u.ric,expl:p.u.expl,src:p});
+          const a=base+(i-(p.multi-1)/2)*.17;
+          bullets.push({x:p.x,y:p.y,vx:Math.cos(a)*p.bspd,vy:Math.sin(a)*p.bspd,pierce:p.pierce,hit:new Set(),life:1.35,dmg:p.dmg,c:p.c,ric:p.u.ric,expl:p.u.expl,src:p});
         }
         p.volley++;
         if(p.u.railgun&&p.volley%4===0) bullets.push({x:p.x,y:p.y,vx:Math.cos(base)*1300,vy:Math.sin(base)*1300,pierce:99,hit:new Set(),life:1,dmg:p.dmg*6,c:p.c,big:1,src:p});
@@ -667,7 +676,7 @@ function simWorld(dt){
         for(let i=0;i<p.u.throwb;i++){const a=ang+(i-(p.u.throwb-1)/2)*.28; bullets.push({x:p.x,y:p.y,vx:Math.cos(a)*620,vy:Math.sin(a)*620,pierce:3,hit:new Set(),life:.8,dmg:p.dmg*1.1,c:p.c,src:p});}
       }
     } else if(S===3){                              // STORM
-      if(p.fireCd<=0){ const first=nearestVisible(p.x,p.y,500); if(first){ p.fireCd=1/rateOf(p); zap(p,first); } }
+      if(p.fireCd<=0){ const first=nearestVisible(p.x,p.y,500); if(first){ p.fireCd=1/rateOf(p); zap(p,first); const used=new Set([first]); for(let k=0;k<p.u.dual;k++){ const nx=nearestEnemy(p.x,p.y,500,used); if(!nx) break; used.add(nx); zap(p,nx); } } }
       if(p.u.storm){
         p.stormCd-=dt;
         if(p.stormCd<=0){
@@ -956,7 +965,7 @@ function snapshot(){
   const eb=[]; for(const q of ebullets) eb.push(rd(q.x),rd(q.y),rd(q.vx),rd(q.vy));
   const b=[]; for(const q of bullets) b.push(rd(q.x),rd(q.y),rd(q.vx),rd(q.vy),q.c+(q.big?10:0));
   const g=[]; for(const q of gems) g.push(rd(q.x),rd(q.y),q.heart?3:q.v>=5?2:q.v>=2?1:0);
-  return {t:'s',st:state,tm:+t.toFixed(2),k:kills,xp,nx:next,lv:lvl,code:partyCode,sd:mapSeed,
+  return {t:'s',v:VERSION,st:state,tm:+t.toFixed(2),k:kills,xp,nx:next,lv:lvl,code:partyCode,sd:mapSeed,
     p:players.map(p=>({i:p.id,n:p.n,x:rd(p.x),y:rd(p.y),h:Math.ceil(p.hp),m:p.max,d:p.dead?1:0,iv:p.inv>0?1:0,bl:p.blades,a:+p.ang.toFixed(2),
                        mg:p.magnet,c:p.c,rv:+p.rv.toFixed(2),rs:Math.ceil(p.respT),rr:p.u.reroll,shd:p.shield?1:0,ch:p.chronoT>0?1:0,fn:p.frenzyN,dc:+p.dashCd.toFixed(2),dm:+p.dashMax.toFixed(2),sy:p.sty,dr:p.drones,sp:p.spd,nv:p.nova,wt:p.pc?1:0})),
     en,eb,b,g,gr,fz,tu,wl,e:netBuf};
@@ -1044,6 +1053,13 @@ let snapAt=0;
 function onClientData(s){
   if(s.t==='full'){hostGone();setMsg('Party is full (6 max).',true);return;}
   if(s.t!=='s') return;
+  if(s.v!==VERSION){
+    const theirs=s.v||'old';
+    try{ hostConn.close(); }catch(e){}
+    screen='menu'; state='menu'; syncMenu();
+    setMsg(`Version mismatch (you: ${VERSION}, host: ${theirs}). You BOTH need to hard refresh (Cmd+Shift+R on Mac / Ctrl+Shift+R on PC), then try again.`,true);
+    return;
+  }
   const prev=state;
   state=s.st; t=s.tm; kills=s.k; xp=s.xp; next=s.nx; lvl=s.lv; partyCode=s.code||partyCode;
   // players
@@ -1118,7 +1134,7 @@ function handleEvs(list){
         const now=performance.now();
         if(now-lastKillSnd>35){lastKillSnd=now;tone(note(pent[Math.min(streak,pent.length-1)]-12)*2,.09,'triangle',.07,1.3);}
         break;}
-      case 'h': if(texts.length<45) texts.push({x:e[1],y:e[2],txt:e[3],life:.5,col:'#fff'}); burst(e[1],e[2],'#fff',2,120,2); break;
+      case 'h': if(texts.length<45) texts.push({x:e[1],y:e[2],txt:e[3],life:e[4]?.8:.5,col:e[4]?'#ffd23f':'#fff',sz:e[4]?20:13}); burst(e[1],e[2],'#fff',2,120,2); break;
       case 'ph': burst(e[1],e[2],'#ff5577',18,260,4); if(e[3]===myId){shake=14;tone(120,.25,'sawtooth',.15,.5);} break;
       case 'ring': rings.push({x:e[1],y:e[2],r:10,max:e[3],t:0,col:e[4]}); break;
       case 'nova': shake=Math.max(shake,5); tone(160,.3,'sine',.14,.4); break;
@@ -1575,7 +1591,7 @@ function drawHUD(){
         {const st=c.s>=0?STYLES[c.s]:null;ctx.fillStyle=RC||(st?st.col:'#8a8fb5');ctx.font=`800 11px ${FONT}`;ctx.fillText(c.r?['','RELIC','EVOLUTION','CURSE'][c.r]:(st?st.n:'GENERAL'),g.x+g.w/2,g.y+54-o);}
         ctx.fillStyle='#fff';{let fs=22;ctx.font=`800 ${fs}px ${FONT}`;while(ctx.measureText(c.n).width>g.w-14&&fs>10){fs--;ctx.font=`800 ${fs}px ${FONT}`;}}ctx.fillText(c.n,g.x+g.w/2,g.y+g.h*.45-o);
         ctx.fillStyle='rgba(255,255,255,.7)';ctx.font=`500 15px ${FONT}`;
-        wrap(c.d,g.x+g.w/2,g.y+g.h*.45+30-o,g.w-30,20);
+        wrap(typeof c.d==='function'?c.d(m.sty):c.d,g.x+g.w/2,g.y+g.h*.45+30-o,g.w-30,20);
       });
       {const rb=rerollBtn(), n=m.rr||0;
        ctx.fillStyle=n>0?'#1d1d40':'#12121f';ctx.strokeStyle=n>0?'#ffd23f':'rgba(255,255,255,.2)';ctx.lineWidth=2;ctx.beginPath();ctx.roundRect(rb.x,rb.y,rb.w,rb.h,12);ctx.fill();ctx.stroke();
@@ -1613,6 +1629,14 @@ function frame(now){
 }
 requestAnimationFrame(frame);
 window.__swarm={get state(){return {screen,state,isHost,partyCode,players:players.length,enemies:enemies.length,t,myId}}, joinParty, createParty};
+// auto-update: if the deployed page is newer than this (possibly cached) copy, reload once
+try{
+  fetch(location.href.split('#')[0].split('?')[0]+'?_='+Date.now(),{cache:'no-store'}).then(r=>r.text()).then(txt=>{
+    const m=txt.match(/let VERSION='([^']+)'/);
+    if(m&&m[1]!==VERSION&&!sessionStorage.getItem('swarm_reloaded')){ sessionStorage.setItem('swarm_reloaded','1'); location.reload(); }
+    else if(m&&m[1]===VERSION) sessionStorage.removeItem('swarm_reloaded');
+  }).catch(()=>{});
+}catch(e){}
 // auto-join from invite link
 if(/^#[A-Za-z0-9]{4}$/.test(location.hash)) setTimeout(()=>joinParty(location.hash.slice(1)),300);
 </script>
