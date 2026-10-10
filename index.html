@@ -1,15 +1,30 @@
 <!doctype html>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
 <title>SWARM</title>
 <style>
   html,body{margin:0;height:100%;overflow:hidden;background:#0a0a14;touch-action:none;user-select:none;-webkit-user-select:none;font-family:-apple-system,system-ui,sans-serif;color:#fff}
   canvas{display:block;width:100%;height:100%}
   #menu{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:safe center;gap:22px;padding:20px 0;overflow:auto;background:rgba(5,5,12,.84)}
   #menu[hidden]{display:none}
+  #lobbyGrid{width:min(1120px,94vw);display:grid;gap:16px 20px;align-items:start;grid-template-columns:minmax(0,1fr);grid-template-areas:"back" "party" "style" "mod" "start"}
+  #lobbyGrid[hidden]{display:none}
+  #lobbyGrid .box{width:auto;min-width:0}
+  #backRow{grid-area:back} #lobbyBox{grid-area:party} #styleBox{grid-area:style} #modBox{grid-area:mod} #startBox{grid-area:start}
+  #backRow button{width:auto;align-self:flex-start;padding:10px 18px;font-size:15px}
+  #startBox{position:sticky;bottom:0;z-index:2;margin:0 -3vw;padding:14px 3vw max(14px,env(safe-area-inset-bottom));background:linear-gradient(rgba(5,5,12,0),rgba(5,5,12,.96) 32%)}
+  #startBox button{width:min(420px,100%);align-self:center}
+  @media (min-width:640px){
+    #lobbyGrid{grid-template-columns:minmax(0,1fr) minmax(0,1fr);grid-template-areas:"back back" "party style" "mod style" "start start"}
+  }
+  @media (min-width:980px){
+    #lobbyGrid{grid-template-columns:minmax(260px,.9fr) minmax(320px,1.2fr) minmax(260px,1fr);grid-template-areas:"back back back" "party style mod" "start start start"}
+    #startBox{position:static;margin:0;padding:0;background:none}
+  }
+  @media (max-height:520px){ h1{font-size:44px} button{padding:10px 12px;font-size:16px} .sc{padding:7px 12px} #codeBig{font-size:46px} #menu{gap:12px} }
   .box{width:min(360px,88vw);display:flex;flex-direction:column;gap:12px;align-items:stretch;text-align:center}
   .box[hidden]{display:none}
-  h1{font-size:64px;font-weight:900;margin:0 0 6px;letter-spacing:2px}
+  h1{font-size:clamp(44px,9vh,72px);font-weight:900;margin:0 0 6px;letter-spacing:2px}
   h2{font-size:14px;font-weight:700;margin:0;color:rgba(255,255,255,.55);letter-spacing:3px}
   button{font:700 18px inherit;font-family:inherit;padding:14px;border-radius:12px;border:0;background:#7dffb2;color:#07120c;cursor:pointer}
   button:active{transform:scale(.97)}
@@ -40,7 +55,10 @@
   #bDaily.on{background:#ffd23f;color:#1b1500}
   #armory{position:fixed;inset:0;display:flex;align-items:flex-start;justify-content:center;background:rgba(5,5,12,.95);overflow:auto;padding:20px 0}
   #armory[hidden]{display:none}
-  #armBox{width:min(520px,92vw);display:flex;flex-direction:column;gap:10px}
+  #armBox{width:min(940px,94vw);display:flex;flex-direction:column;gap:10px}
+  .agrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:10px}
+  .armHead{position:sticky;top:-20px;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;background:linear-gradient(rgba(5,5,12,.98) 75%,rgba(5,5,12,0))}
+  .armHead button{padding:9px 16px;font-size:15px}
   #armBox h2{font-size:22px;color:#fff;letter-spacing:2px}
   .coins{font-size:22px;font-weight:900;color:#ffd23f}
   .arow{display:flex;align-items:center;gap:10px;background:#12122a;border:1.5px solid rgba(255,255,255,.12);border-radius:12px;padding:10px 12px}
@@ -63,39 +81,45 @@
     <div id="msg"></div>
     <button id="bCancel" class="ghost" hidden>Cancel</button>
   </div>
-  <div class="box" id="backRow" hidden><button id="bBack" class="ghost">← Back to menu</button></div>
-  <div class="box" id="styleBox" hidden>
-    <h2>CHOOSE YOUR STYLE</h2>
-    <div id="stylelist"></div>
-    <div id="relicPick" hidden>Start with: <select id="rp1"></select><select id="rp2"></select></div>
-    <div id="msg2" style="font-size:12px;color:rgba(255,255,255,.5)">Move: WASD / arrows / hold mouse · Dash: Space, Shift, right-click or the DASH button</div>
-    <div id="msgTouch" style="font-size:12px;color:rgba(255,255,255,.5)" hidden>Touch: joystick (bottom right) to move · DASH button (bottom left) · ❚❚ to pause</div>
-  </div>
-  <div class="box" id="modBox" hidden>
-    <h2>RUN MODIFIER</h2>
-    <div id="modlist"></div>
-    <button id="bDaily" class="ghost">Daily challenge: OFF</button>
-  </div>
-  <div class="box" id="lobbyBox" hidden>
-    <div id="partyInfo">
-      <h2>PARTY CODE</h2>
-      <div id="codeBig"></div>
-      <button id="bCopy" class="ghost">Copy invite link</button>
-      <div id="plist"></div>
+  <div id="lobbyGrid" hidden>
+    <div class="box" id="backRow" hidden><button id="bBack" class="ghost">← Back to menu</button></div>
+    <div class="box" id="lobbyBox" hidden>
+      <div id="partyInfo">
+        <h2>PARTY CODE</h2>
+        <div id="codeBig"></div>
+        <button id="bCopy" class="ghost">Copy invite link</button>
+        <div id="plist"></div>
+      </div>
+      <button id="bArmory2" class="ghost">Armory <span id="coinsLine2" style="color:#ffd23f;font-weight:900"></span></button>
     </div>
-    <button id="bArmory2" class="ghost">Armory <span id="coinsLine2" style="color:#ffd23f;font-weight:900"></span></button>
-    <button id="bStart">Start</button>
-    <div id="lmsg"></div>
+    <div class="box" id="styleBox" hidden>
+      <h2>CHOOSE YOUR STYLE</h2>
+      <div id="stylelist"></div>
+      <div id="relicPick" hidden>Start with: <select id="rp1"></select><select id="rp2"></select></div>
+      <div id="msg2" style="font-size:12px;color:rgba(255,255,255,.5)">Move: WASD / arrows / hold mouse · Dash: Space, Shift, right-click or the DASH button</div>
+      <div id="msgTouch" style="font-size:12px;color:rgba(255,255,255,.5)" hidden>Touch: joystick (bottom right) to move · DASH button (bottom left) · ❚❚ to pause</div>
+    </div>
+    <div class="box" id="modBox" hidden>
+      <h2>RUN MODIFIER</h2>
+      <div id="modlist"></div>
+      <button id="bDaily" class="ghost">Daily challenge: OFF</button>
+    </div>
+    <div class="box" id="startBox" hidden>
+      <button id="bStart">Start</button>
+      <div id="lmsg"></div>
+    </div>
   </div>
 </div>
 <div id="armory" hidden><div id="armBox"></div></div>
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script>
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
-let W, H, dpr, Z = 1;
+let W, H, dpr, Z = 1, UI = 1;
+const F=(n,m=10)=>Math.max(m,Math.round(n*UI));   // HUD font size that scales with the screen
 function resize(){
   dpr = devicePixelRatio||1; W = innerWidth; H = innerHeight; cv.width = W*dpr; cv.height = H*dpr;
   Z = Math.max(.5, Math.min(1.3, Math.min(W/1100, H/700)));   // same world view for everyone
+  UI = Math.max(.62, Math.min(1.15, Math.min(H/620, W/760)));   // HUD scale: compact on phones, roomier on big screens
 }
 addEventListener('resize', resize); resize();
 
@@ -114,7 +138,7 @@ const note = n => 261.63*Math.pow(2,n/12);
 const pent = [0,2,4,7,9,12,14,16,19,21,24,26,28];
 let lastKillSnd = 0, lastGemSnd = 0, lastBoomSnd = 0, lastZapSnd = 0;
 
-let VERSION='2026-10-10-j';
+let VERSION='2026-10-10-l';
 let inputTimer=null, hbTimer=null, connecting=false, joinToken=0, reconBusy=false, graceUntil=0, lostAt=0, staleLast=0, staleT=0;
 const RK=Math.random().toString(36).slice(2,12)+Math.random().toString(36).slice(2,8);   // identifies this tab so the host can hand its character back after a drop
 let paused=false, pausedBy=0;
@@ -554,9 +578,10 @@ const isTouchDev=(window.matchMedia&&matchMedia('(pointer:coarse)').matches)||('
 let touchSeen=false;
 const touchUI=()=>isTouchDev||touchSeen;
 const joy={id:null,active:false,dx:0,dy:0};
-const dashBtn=()=>touchUI()?{x:78,y:H-100,r:54}:{x:70,y:H-70,r:42};
-const joyBase=()=>({x:W-108,y:H-108,r:68});
-const pauseBtn=()=>({x:W/2,y:H-42,r:22});
+const ck=()=>Math.max(.72,Math.min(1,H/520));   // control scale (short landscape phones get smaller buttons)
+const dashBtn=()=>{ const k=ck(); return touchUI()?{x:Math.round(78*k),y:H-Math.round(100*k),r:Math.round(54*k)}:{x:70,y:H-70,r:42}; };
+const joyBase=()=>{ const k=ck(); return {x:W-Math.round(108*k),y:H-Math.round(108*k),r:Math.round(68*k)}; };
+const pauseBtn=()=>({x:W/2,y:H-Math.round(42*ck()),r:22});
 const joyZone=(x,y)=>x>W*.5&&y>H*.4;
 function updateJoy(x,y){
   const b=joyBase(); let dx=(x-b.x)/b.r, dy=(y-b.y)/b.r; const m=Math.hypot(dx,dy);
@@ -1653,8 +1678,10 @@ function syncMenu(){
   $('menu').hidden=!(screen==='menu'||inLobby||needStyle);
   $('mainBox').hidden=screen!=='menu';
   $('bCancel').hidden=!(connecting&&screen==='menu');
+  $('lobbyGrid').hidden=!(inLobby||needStyle);
   $('backRow').hidden=!(inLobby||needStyle);
   $('lobbyBox').hidden=!inLobby;
+  $('startBox').hidden=!inLobby;
   $('styleBox').hidden=!(inLobby||needStyle);
   $('modBox').hidden=!inLobby;
   if(inLobby){
@@ -1696,16 +1723,16 @@ function renderArmory(){
     return `<div class="arow"><div class="t"><b>${d.n}</b>${d.d}<div class="pips">${'●'.repeat(lv)}${'○'.repeat(d.max-lv)}</div></div><button data-up="${d.k}" ${maxed||meta.coins<c?'disabled':''}>${maxed?'MAX':'Buy · '+c}</button></div>`; }).join('');
   const rel=Object.keys(RELIC_COST).map(n=>{ const u=UPGRADES.find(x=>x.n===n), own=!!meta.relics[n], c=RELIC_COST[n];
     return `<div class="arow"><div class="t"><b style="color:#ffd23f">${n}</b>${u?u.d:''}</div><button data-rel="${n}" ${own||meta.coins<c?'disabled':''}>${own?'Owned':'Unlock · '+c}</button></div>`; }).join('');
-  $('armBox').innerHTML=`<h2>ARMORY</h2><div class="coins">${meta.coins} coins</div><div style="font-size:12px;color:rgba(255,255,255,.55)">Earn coins every run. Permanent upgrades apply to all your future runs, in co-op too.</div>
-    <h2 style="font-size:14px;margin-top:6px;color:rgba(255,255,255,.55)">PERMANENT UPGRADES</h2>${rows}
-    <h2 style="font-size:14px;margin-top:6px;color:rgba(255,255,255,.55)">STARTING RELICS (pick one in the lobby)</h2>${rel}
+  $('armBox').innerHTML=`<div class="armHead"><div><h2>ARMORY</h2><div class="coins">${meta.coins} coins</div></div><button id="armClose0" class="ghost">← Back</button></div><div style="font-size:12px;color:rgba(255,255,255,.55)">Earn coins every run. Permanent upgrades apply to all your future runs, in co-op too.</div>
+    <h2 style="font-size:14px;margin-top:6px;color:rgba(255,255,255,.55)">PERMANENT UPGRADES</h2><div class="agrid">${rows}</div>
+    <h2 style="font-size:14px;margin-top:6px;color:rgba(255,255,255,.55)">STARTING RELICS (pick one in the lobby)</h2><div class="agrid">${rel}</div>
     <h2 style="font-size:14px;margin-top:6px;color:rgba(255,255,255,.55)">SAVE</h2>
     <div style="font-size:12px;color:rgba(255,255,255,.55)">Auto-saved in this browser (storage + cookie), so closing the tab is fine. To move to another phone/browser, copy your backup code and restore it there.</div>
     <div style="display:flex;gap:8px"><button id="bkCopy" class="ghost">Copy backup code</button><button id="bkLoad" class="ghost">Restore from code</button></div>
     <button id="armClose" class="ghost" style="margin-top:8px">← Back</button>`;
   $('armBox').querySelectorAll('[data-up]').forEach(b=>b.onclick=()=>{ const d=UPG_DEFS.find(x=>x.k===b.dataset.up), c=costOf(d); if(lvOf(d.k)<d.max&&meta.coins>=c){ meta.coins-=c; meta.lv[d.k]=lvOf(d.k)+1; saveMeta(); syncLoadout(); refreshMetaUI(); renderArmory(); } });
   $('armBox').querySelectorAll('[data-rel]').forEach(b=>b.onclick=()=>{ const n=b.dataset.rel, c=RELIC_COST[n]; if(!meta.relics[n]&&meta.coins>=c){ meta.coins-=c; meta.relics[n]=true; saveMeta(); syncLoadout(); refreshMetaUI(); renderArmory(); } });
-  $('armClose').onclick=()=>{ $('armory').hidden=true; };
+  $('armClose').onclick=$('armClose0').onclick=()=>{ $('armory').hidden=true; };
   $('bkCopy').onclick=async()=>{ const c=metaCode(); try{ await navigator.clipboard.writeText(c); $('bkCopy').textContent='Copied!'; setTimeout(()=>{ const b=$('bkCopy'); if(b) b.textContent='Copy backup code'; },1500); }catch(e){ prompt('Copy your backup code:',c); } };
   $('bkLoad').onclick=()=>{ const c=prompt('Paste your backup code (this replaces the progress on this device):'); if(c===null) return; if(!loadMetaCode(c)) alert("That code didn't work. Make sure you copied all of it."); else renderArmory(); };
 }
@@ -2087,25 +2114,33 @@ function draw(){
 function drawHUD(){
   ctx.setTransform(dpr,0,0,dpr,0,0);
   const m=me();
-  ctx.fillStyle='rgba(255,255,255,.1)';ctx.fillRect(0,0,W,8);
-  ctx.fillStyle='#5ee6ff';ctx.fillRect(0,0,W*Math.min(1,xp/next),8);
+  const u=UI, xh=Math.max(5,Math.round(8*u));
+  ctx.fillStyle='rgba(255,255,255,.1)';ctx.fillRect(0,0,W,xh);
+  ctx.fillStyle='#5ee6ff';ctx.fillRect(0,0,W*Math.min(1,xp/next),xh);
   // hp bars
-  const n=players.length, bw=Math.min(120,(W-40)/Math.max(n,1)-8), tw=n*(bw+8)-8;
+  const n=players.length, bw=Math.min(Math.round(120*u),(W-40)/Math.max(n,1)-8), tw=n*(bw+8)-8, hpY=xh+Math.round(12*u), hpH=Math.max(8,Math.round(12*u));
   players.forEach((p,i)=>{
     const x=W/2-tw/2+i*(bw+8);
-    ctx.fillStyle='rgba(0,0,0,.45)';ctx.fillRect(x,20,bw,12);
-    ctx.fillStyle=p.dead?'#555':css(p.c);ctx.globalAlpha=p.id===myId?1:.75;ctx.fillRect(x,20,bw*Math.max(0,p.hp)/p.max,12);ctx.globalAlpha=1;
-    if(p.id===myId){ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.strokeRect(x-1,19,bw+2,14);}
+    ctx.fillStyle='rgba(0,0,0,.45)';ctx.fillRect(x,hpY,bw,hpH);
+    ctx.fillStyle=p.dead?'#555':css(p.c);ctx.globalAlpha=p.id===myId?1:.75;ctx.fillRect(x,hpY,bw*Math.max(0,p.hp)/p.max,hpH);ctx.globalAlpha=1;
+    if(p.id===myId){ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.strokeRect(x-1,hpY-1,bw+2,hpH+2);}
   });
-  ctx.textAlign='center';ctx.fillStyle='#fff';ctx.font=`800 34px ${FONT}`;ctx.fillText(mmss(t),W/2,70);
-  ctx.font=`600 14px ${FONT}`;ctx.fillStyle='rgba(255,255,255,.7)';
-  ctx.textAlign='left';ctx.fillText(`LV ${lvl}`,16,30);ctx.fillText(`${kills} kills`,16,50);
-  if(m&&m.sty>=0){ctx.fillStyle=STYLES[m.sty].col;ctx.font=`800 12px ${FONT}`;ctx.fillText(STYLES[m.sty].n,16,68);ctx.font=`600 14px ${FONT}`;ctx.fillStyle='rgba(255,255,255,.7)';
-    {const sl=synList(syn); ctx.font=`700 11px ${FONT}`; sl.forEach((nm,i)=>{ctx.fillStyle='#ffd23f';ctx.fillText('◆ '+nm,16,(m.fn>0?100:84)+i*14);});}
-    if(m.fn>0){ctx.fillStyle='#ffd23f';ctx.font=`800 12px ${FONT}`;ctx.fillText('FRENZY ×'+m.fn,16,84);ctx.font=`600 14px ${FONT}`;ctx.fillStyle='rgba(255,255,255,.7)';}}
-  ctx.textAlign='right';ctx.fillText(`best ${mmss(best)}`,W-16,30);
-  if(mod!=='none'||dailyOn){ctx.fillStyle='#ff9f1c';ctx.font=`800 12px ${FONT}`;ctx.fillText((dailyOn?'DAILY · ':'')+MODS[modIdx()].name.toUpperCase(),W-16,68);ctx.font=`600 14px ${FONT}`;ctx.fillStyle='rgba(255,255,255,.7)';}
-  if(partyCode&&players.length>1||(partyCode&&!isHost)){ctx.fillText(`party ${partyCode}`,W-16,50);}
+  const tF=F(34,22), ty=hpY+hpH+Math.round(tF*.95)+2;
+  ctx.textAlign='center';ctx.fillStyle='#fff';ctx.font=`800 ${tF}px ${FONT}`;ctx.fillText(mmss(t),W/2,ty);
+  let ny=ty+Math.round(14*u);   // centre notice stack (boss bar, objective, extraction, streak) flows down from here, always hugging the top
+  const f14=F(14,11), f12=F(12,10), lh=f14+4, lx=Math.max(10,Math.round(16*u)), ly0=hpY+f14;
+  ctx.font=`600 ${f14}px ${FONT}`;ctx.fillStyle='rgba(255,255,255,.7)';
+  ctx.textAlign='left';ctx.fillText(`LV ${lvl}`,lx,ly0);ctx.fillText(`${kills} kills`,lx,ly0+lh);
+  if(m&&m.sty>=0){
+    ctx.fillStyle=STYLES[m.sty].col;ctx.font=`800 ${f12}px ${FONT}`;ctx.fillText(STYLES[m.sty].n,lx,ly0+lh*2);
+    let ry=ly0+lh*3;
+    if(m.fn>0){ctx.fillStyle='#ffd23f';ctx.fillText('FRENZY ×'+m.fn,lx,ry);ry+=lh-2;}
+    ctx.font=`700 ${F(11,9)}px ${FONT}`; synList(syn).forEach((nm,i)=>{ctx.fillStyle='#ffd23f';ctx.fillText('◆ '+nm,lx,ry+i*(lh-4));});
+  }
+  ctx.font=`600 ${f14}px ${FONT}`;ctx.fillStyle='rgba(255,255,255,.7)';ctx.textAlign='right';
+  const rx=W-lx; ctx.fillText(`best ${mmss(best)}`,rx,ly0);
+  if(partyCode&&players.length>1||(partyCode&&!isHost)) ctx.fillText(`party ${partyCode}`,rx,ly0+lh);
+  if(mod!=='none'||dailyOn){ctx.fillStyle='#ff9f1c';ctx.font=`800 ${f12}px ${FONT}`;ctx.fillText((dailyOn?'DAILY · ':'')+MODS[modIdx()].name.toUpperCase(),rx,ly0+lh*2);}
   if(m&&m.sty>=0&&!m.dead&&(state==='play'||state==='levelup')){   // dash button + cooldown
     const b=dashBtn(), fr=m.dashMax?1-Math.max(0,m.dashCd||0)/m.dashMax:1, ready=fr>=1;
     ctx.fillStyle='rgba(8,8,20,.65)';ctx.beginPath();ctx.arc(b.x,b.y,b.r,0,6.283);ctx.fill();
@@ -2125,16 +2160,19 @@ function drawHUD(){
     ctx.fillStyle='rgba(255,255,255,.75)';ctx.fillRect(pb.x-7,pb.y-8,5,16);ctx.fillRect(pb.x+2,pb.y-8,5,16);
   }
   const boss=enemies.find(e=>e.ti===6);
-  if(boss){
-    const bw2=Math.min(420,W-40), bx=W/2-bw2/2;
-    ctx.fillStyle='rgba(0,0,0,.55)';ctx.fillRect(bx,108,bw2,14);
-    ctx.fillStyle='#ff2fd0';ctx.fillRect(bx,108,bw2*boss.hp/boss.max,14);
-    ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.strokeRect(bx,108,bw2,14);
-    ctx.fillStyle='#fff';ctx.font=`800 12px ${FONT}`;ctx.textAlign='center';ctx.fillText(BOSS_NAMES[Math.max(0,(boss.el||1)-1)]+(boss.aux===3?'  —  SHIELDED':boss.aux===4?'  —  EXPOSED':''),W/2,102);
+  if(boss){   // slim bar with the name inside it, first item of the top stack so it never lands mid-screen
+    const bw2=Math.min(Math.round(440*u),W*(W<H?.56:.46)), bh=Math.max(13,Math.round(17*u)), bx=W/2-bw2/2;
+    ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(bx,ny,bw2,bh);
+    ctx.fillStyle='#ff2fd0';ctx.fillRect(bx,ny,bw2*Math.max(0,boss.hp)/boss.max,bh);
+    ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.strokeRect(bx,ny,bw2,bh);
+    ctx.fillStyle='#fff';ctx.font=`800 ${F(11,9)}px ${FONT}`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.shadowColor='#000';ctx.shadowBlur=3;
+    ctx.fillText(BOSS_NAMES[Math.max(0,(boss.el||1)-1)]+(boss.aux===3?'  —  SHIELDED':boss.aux===4?'  —  EXPOSED':''),W/2,ny+bh/2+1);
+    ctx.textBaseline='alphabetic';ctx.shadowBlur=0;
+    ny+=bh+Math.round(10*u);
   }
   // minimap
   {
-    const mr=Math.min(58,W*.12), mx=W-mr-14, my=(touchUI()?86:86)+mr, sc=mr/ARENA;
+    const mr=Math.min(Math.round(58*u),W*.11), mx=W-mr-Math.max(10,Math.round(14*u)), my=ly0+lh*2+10+mr, sc=mr/ARENA;
     ctx.fillStyle='rgba(8,8,20,.7)';ctx.beginPath();ctx.arc(mx,my,mr,0,6.283);ctx.fill();
     ctx.strokeStyle='rgba(255,60,90,.7)';ctx.lineWidth=2;ctx.stroke();
     ctx.fillStyle='rgba(90,255,120,.35)';for(const q of pools){ctx.beginPath();ctx.arc(mx+q.x*sc,my+q.y*sc,Math.max(2,q.r*sc),0,6.283);ctx.fill();}
@@ -2154,9 +2192,9 @@ function drawHUD(){
       else if(type===1) lbl=obV[6]?`AMBUSH: ${obV[7]} elites left`:`CURSED CHEST: walk into it  ·  ${obV[4]}s`;
       else lbl=obV[6]>0?`SUPPLY DROP in ${obV[6]}s`:`SUPPLY DROP: grab it  ·  ${obV[4]}s`;
       if(type===1) col='#ff7a8e';
-      ctx.textAlign='center';ctx.fillStyle=col;ctx.font=`800 14px ${FONT}`;ctx.fillText(lbl,W/2,boss?140:124);
+      ctx.textAlign='center';ctx.fillStyle=col;ctx.font=`800 ${f14}px ${FONT}`;ctx.fillText(lbl,W/2,ny);ny+=f14+6;
       obs.push([obV[1],obV[2],col]); }
-    if(pxV.length){ ctx.textAlign='center';ctx.fillStyle='#7dffb2';ctx.font=`800 14px ${FONT}`;ctx.fillText(`EXTRACTION OPEN: everyone reach the centre ${pxV[2]}%`,W/2,(obV.length?(boss?158:142):(boss?140:124))); obs.push([0,0,'#7dffb2']); }
+    if(pxV.length){ ctx.textAlign='center';ctx.fillStyle='#7dffb2';ctx.font=`800 ${f14}px ${FONT}`;ctx.fillText(W>620?`EXTRACTION OPEN: everyone reach the centre ${pxV[2]}%`:`EXTRACT: all reach the centre ${pxV[2]}%`,W/2,ny);ny+=f14+6; obs.push([0,0,'#7dffb2']); }
     for(const [wx,wy,col] of obs){
       const sx=W/2+(wx-C.x)*Z, sy=H/2+(wy-C.y)*Z, m=46;
       if(sx>m&&sx<W-m&&sy>m&&sy<H-m) continue;
@@ -2165,9 +2203,9 @@ function drawHUD(){
       ctx.save();ctx.translate(ax,ay);ctx.rotate(ang);ctx.fillStyle=col;ctx.beginPath();ctx.moveTo(14,0);ctx.lineTo(-10,-10);ctx.lineTo(-10,10);ctx.closePath();ctx.fill();ctx.restore();
     }
   }
-  if(streak>=5&&state==='play'){ctx.textAlign='center';ctx.fillStyle='#ffd23f';ctx.font=`800 18px ${FONT}`;ctx.fillText(`${streak} streak`,W/2,96);}
-  if(bannerT>0){ctx.textAlign='center';ctx.globalAlpha=Math.min(1,bannerT);ctx.fillStyle='#ff4d6d';ctx.font=`900 40px ${FONT}`;ctx.fillText(banner,W/2,H*.28);ctx.globalAlpha=1;}
-  if(m&&m.dead&&state==='play'){ctx.textAlign='center';ctx.fillStyle='#ff7a8e';ctx.font=`800 22px ${FONT}`;ctx.fillText(`DOWN — respawning in ${m.rs||0}s (or a teammate can stand on you)`,W/2,H-60);}
+  if(streak>=5&&state==='play'){ctx.textAlign='center';ctx.textAlign='left';ctx.fillStyle='#ffd23f';ctx.font=`800 ${F(16,12)}px ${FONT}`;ctx.fillText(`${streak} streak`,W/2+Math.round(F(34,22)*1.55),ty-2);}
+  if(bannerT>0){ctx.textAlign='center';ctx.globalAlpha=Math.min(1,bannerT);ctx.fillStyle='#ff4d6d';ctx.font=`900 ${F(36,22)}px ${FONT}`;ctx.fillText(banner,W/2,ny+F(34,22));ctx.globalAlpha=1;}
+  if(m&&m.dead&&state==='play'){ctx.textAlign='center';ctx.fillStyle='#ff7a8e';ctx.font=`800 ${F(22,14)}px ${FONT}`;ctx.fillText(`DOWN — respawning in ${m.rs||0}s`+(W>520?' (or a teammate can stand on you)':''),W/2,H-Math.round(86*ck()));}
 
   if(paused){
     ctx.fillStyle='rgba(5,5,12,.74)';ctx.fillRect(0,0,W,H);
@@ -2185,16 +2223,16 @@ function drawHUD(){
       ctx.fillStyle='rgba(5,5,12,.72)';ctx.fillRect(0,0,W,H);
       ctx.textAlign='center';ctx.fillStyle='#5ee6ff';ctx.font=`900 34px ${FONT}`;ctx.fillText('LEVEL UP',W/2,cardGeom(0).y-30);
       m.pc.forEach((ui,i)=>{
-        const c=UPGRADES[ui],g=cardGeom(i),hv=i===hover,o=hv?6:0;
+        const c=UPGRADES[ui],g=cardGeom(i),hv=i===hover,o=hv?6:0,k=Math.max(.72,Math.min(1,g.h/250));
         const RC=[null,'#ffd23f','#ff9f1c','#ff4d6d'][c.r||0];
         ctx.fillStyle=RC?(c.r===3?'#2a1424':'#2a2412'):(hv?'#26264a':'#161630');ctx.strokeStyle=RC||(hv?'#5ee6ff':'rgba(255,255,255,.2)');ctx.lineWidth=RC?4:(hv?3:1.5);if(RC){ctx.shadowColor=RC;ctx.shadowBlur=hv?26:16;}
         ctx.beginPath();ctx.roundRect(g.x,g.y-o,g.w,g.h,14);ctx.fill();ctx.stroke();ctx.shadowBlur=0;
-        ctx.fillStyle='#5ee6ff';ctx.font=`700 14px ${FONT}`;ctx.fillText(i+1,g.x+g.w/2,g.y+34-o);
-        {const lt=isHost?lvlText(c,m):(m.pl&&m.pl[i]); if(lt){ctx.fillStyle=lt==='NEW'?'#7dffb2':'#ffd23f';ctx.font=`800 12px ${FONT}`;ctx.fillText(lt,g.x+g.w/2,g.y+g.h-16-o);}}
-        {const st=c.s>=0?STYLES[c.s]:null;ctx.fillStyle=RC||(st?st.col:'#8a8fb5');ctx.font=`800 11px ${FONT}`;ctx.fillText(c.r?['','RELIC','EVOLUTION','CURSE'][c.r]:(st?st.n:'GENERAL'),g.x+g.w/2,g.y+54-o);}
-        ctx.fillStyle='#fff';{let fs=22;ctx.font=`800 ${fs}px ${FONT}`;while(ctx.measureText(c.n).width>g.w-14&&fs>10){fs--;ctx.font=`800 ${fs}px ${FONT}`;}}ctx.fillText(c.n,g.x+g.w/2,g.y+g.h*.45-o);
-        ctx.fillStyle='rgba(255,255,255,.7)';ctx.font=`500 15px ${FONT}`;
-        wrap(typeof c.d==='function'?c.d(m.sty):c.d,g.x+g.w/2,g.y+g.h*.45+30-o,g.w-30,20);
+        ctx.fillStyle='#5ee6ff';ctx.font=`700 ${Math.round(14*k)}px ${FONT}`;ctx.fillText(i+1,g.x+g.w/2,g.y+34*k-o);
+        {const lt=isHost?lvlText(c,m):(m.pl&&m.pl[i]); if(lt){ctx.fillStyle=lt==='NEW'?'#7dffb2':'#ffd23f';ctx.font=`800 ${Math.round(12*k)}px ${FONT}`;ctx.fillText(lt,g.x+g.w/2,g.y+g.h-14*k-o);}}
+        {const st=c.s>=0?STYLES[c.s]:null;ctx.fillStyle=RC||(st?st.col:'#8a8fb5');ctx.font=`800 ${Math.round(11*k)}px ${FONT}`;ctx.fillText(c.r?['','RELIC','EVOLUTION','CURSE'][c.r]:(st?st.n:'GENERAL'),g.x+g.w/2,g.y+54*k-o);}
+        ctx.fillStyle='#fff';{let fs=Math.round(22*k);ctx.font=`800 ${fs}px ${FONT}`;while(ctx.measureText(c.n).width>g.w-14&&fs>10){fs--;ctx.font=`800 ${fs}px ${FONT}`;}}ctx.fillText(c.n,g.x+g.w/2,g.y+g.h*.45-o);
+        ctx.fillStyle='rgba(255,255,255,.7)';ctx.font=`500 ${Math.max(12,Math.round(15*k))}px ${FONT}`;
+        wrap(typeof c.d==='function'?c.d(m.sty):c.d,g.x+g.w/2,g.y+g.h*.45+28*k-o,g.w-24,Math.max(15,Math.round(20*k)));
       });
       {const rb=rerollBtn(), n=m.rr||0;
        ctx.fillStyle=n>0?'#1d1d40':'#12121f';ctx.strokeStyle=n>0?'#ffd23f':'rgba(255,255,255,.2)';ctx.lineWidth=2;ctx.beginPath();ctx.roundRect(rb.x,rb.y,rb.w,rb.h,12);ctx.fill();ctx.stroke();
