@@ -61,7 +61,9 @@
     <button id="bDailyMain" class="ghost">Daily challenge</button>
     <button id="bArmory" class="ghost">Armory <span id="coinsLine" style="color:#ffd23f;font-weight:900"></span></button>
     <div id="msg"></div>
+    <button id="bCancel" class="ghost" hidden>Cancel</button>
   </div>
+  <div class="box" id="backRow" hidden><button id="bBack" class="ghost">← Back to menu</button></div>
   <div class="box" id="styleBox" hidden>
     <h2>CHOOSE YOUR STYLE</h2>
     <div id="stylelist"></div>
@@ -111,7 +113,8 @@ const note = n => 261.63*Math.pow(2,n/12);
 const pent = [0,2,4,7,9,12,14,16,19,21,24,26,28];
 let lastKillSnd = 0, lastGemSnd = 0, lastBoomSnd = 0, lastZapSnd = 0;
 
-let VERSION='2026-10-10-f';
+let VERSION='2026-10-10-g';
+let inputTimer=null, connecting=false, joinToken=0;
 let paused=false, pausedBy=0;
 const MODS=[
   {id:'none',name:'Standard',desc:'No modifier.',coin:1},
@@ -122,7 +125,7 @@ const MODS=[
   {id:'dark',name:'Blackout',desc:'You can only see what is close.',coin:1.35},
   {id:'horde',name:'Endless Horde',desc:'1.7x the enemies, each 40% weaker.',coin:1.3},
 ];
-let mod='none', modPick='none', dailyOn=false, copiedAt=0;
+let mod='none', modPick='none', dailyOn=false, copiedAt=-1e9;
 let runId=0, awardedRid=-1, lastCoins=0, runBossKills=0;
 const UPG_DEFS=[
   {k:'hp',  n:'Toughness',   d:'+10 starting HP per level',      max:5, cost:[40,70,110,160,230]},
@@ -484,6 +487,7 @@ function togglePause(){
   if(isHost) setPaused(!paused,(me()||{}).n);
   else if(hostConn&&hostConn.open) hostConn.send({t:'pause'});
 }
+const endMenuBtn=()=>({x:W/2-95,y:H*.38+214,w:190,h:42});
 const pauseBtns=()=>({resume:{x:W/2-110,y:H/2+14,w:220,h:46},leave:{x:W/2-110,y:H/2+72,w:220,h:46}});
 const inBtn=(b,x,y)=>x>=b.x&&x<=b.x+b.w&&y>=b.y&&y<=b.y+b.h;
 function triggerDash(){
@@ -526,6 +530,7 @@ function getInput(){
 addEventListener('keydown',e=>{
   if(e.target.tagName==='INPUT') return;
   initAudio(); keys[e.code]=true;
+  if(e.code==='Escape'&&!$('armory').hidden){ $('armory').hidden=true; return; }
   if(['Space','Enter','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
   if(screen!=='game') return;
   if(e.code==='Escape'){ if(!e.repeat) togglePause(); return; }
@@ -533,6 +538,7 @@ addEventListener('keydown',e=>{
   if(state==='play' && !e.repeat && (e.code==='Space'||e.code==='ShiftLeft'||e.code==='ShiftRight')) triggerDash();
   if((state==='dead'||state==='won') && isHost && performance.now()-deadAt>600 && (e.code==='Space'||e.code==='Enter'||e.code==='KeyR')) restartGame();
   if((state==='dead'||state==='won') && e.code==='KeyS') copyResult();
+  if((state==='dead'||state==='won') && e.code==='KeyM'){ leaveToMenu(); return; }
   if((state==='dead'||state==='won') && isHost && e.code==='KeyC' && performance.now()-deadAt>400){ resetWorld(); state='lobby'; syncMenu(); }
   if(state==='levelup' && ['Digit1','Digit2','Digit3'].includes(e.code)) choose(+e.code.slice(5)-1);
   if(state==='levelup' && e.code==='KeyR') reroll();
@@ -542,7 +548,7 @@ cv.addEventListener('contextmenu',e=>{ e.preventDefault(); triggerDash(); });
 cv.addEventListener('pointerdown',e=>{
   e.preventDefault(); initAudio();
   if(e.pointerType==='touch') touchSeen=true;
-  if(screen==='game'&&paused){ const b=pauseBtns(); if(inBtn(b.resume,e.clientX,e.clientY)) togglePause(); else if(inBtn(b.leave,e.clientX,e.clientY)) location.href=location.href.split('#')[0]; return; }
+  if(screen==='game'&&paused){ const b=pauseBtns(); if(inBtn(b.resume,e.clientX,e.clientY)) togglePause(); else if(inBtn(b.leave,e.clientX,e.clientY)) leaveToMenu(); return; }
   if(screen==='game'&&state==='play'){
     const b=dashBtn(); if((e.clientX-b.x)**2+(e.clientY-b.y)**2<(b.r+12)**2){ triggerDash(); return; }
     if(touchUI()){
@@ -556,6 +562,7 @@ cv.addEventListener('pointerdown',e=>{
   if(e.button===2) return;
   ptr.down=true; ptr.x=e.clientX; ptr.y=e.clientY;
   if(screen!=='game') return;
+  if((state==='dead'||state==='won')&&inBtn(endMenuBtn(),e.clientX,e.clientY)){ leaveToMenu(); return; }
   if((state==='dead'||state==='won') && isHost && performance.now()-deadAt>600) restartGame();
   else if(state==='levelup'){const rb=rerollBtn(); if(e.clientX>=rb.x&&e.clientX<=rb.x+rb.w&&e.clientY>=rb.y&&e.clientY<=rb.y+rb.h){reroll();return;} const i=cardAt(e.clientX,e.clientY); if(i>=0) choose(i);}
 });
@@ -1287,44 +1294,56 @@ function pickStyle(i){
 function createParty(attempt=0){
   initAudio(); solo=false; dailyOn=false;
   if(typeof Peer==='undefined'){setMsg('Multiplayer library failed to load (offline?)',true);return;}
-  setMsg('Creating party…');
+  setMsg('Creating party…'); connecting=true; syncMenu();
+  const tok=attempt===0?++joinToken:joinToken;
   partyCode=genCode();
-  peer=new Peer('swarm-'+partyCode,ICE);
-  peer.on('open',()=>{ enterGame(); state='lobby'; syncMenu(); });
-  peer.on('error',e=>{
-    if(e.type==='unavailable-id'&&attempt<5){peer.destroy();createParty(attempt+1);}
-    else setMsg('Network error: '+e.type,true);
+  const pr=peer=new Peer('swarm-'+partyCode,ICE);
+  pr.on('open',()=>{ if(tok!==joinToken) return; connecting=false; enterGame(); state='lobby'; syncMenu(); });
+  pr.on('error',e=>{
+    if(tok!==joinToken) return;
+    if(e.type==='unavailable-id'&&attempt<5){pr.destroy();createParty(attempt+1);}
+    else { connecting=false; setMsg('Network error: '+e.type,true); syncMenu(); }
   });
-  peer.on('connection',onConn);
+  pr.on('connection',c=>{ if(tok===joinToken) onConn(c); });
 }
 function joinParty(code){
   initAudio();
   code=(code||'').toUpperCase().trim();
   if(code.length!==4){setMsg('Enter the 4-letter code',true);return;}
   if(typeof Peer==='undefined'){setMsg('Multiplayer library failed to load (offline?)',true);return;}
-  setMsg('Connecting…'); partyCode=code;
-  peer=new Peer(undefined,ICE);
+  setMsg('Connecting…'); partyCode=code; connecting=true; syncMenu();
+  const tok=++joinToken;
+  const pr=peer=new Peer(undefined,ICE);
   let to=null;
-  const fail=m=>{clearTimeout(to);setMsg(m,true);try{peer.destroy()}catch(e){}};
-  peer.on('error',e=>fail(e.type==='peer-unavailable'?'No party with that code':'Network error: '+e.type));
-  peer.on('open',id=>{
+  const fail=m=>{clearTimeout(to); if(tok!==joinToken) return; connecting=false; setMsg(m,true); try{pr.destroy()}catch(e){} syncMenu();};
+  pr.on('error',e=>fail(e.type==='peer-unavailable'?'No party with that code':'Network error: '+e.type));
+  pr.on('open',id=>{
+    if(tok!==joinToken) return;
     myId=id;
-    hostConn=peer.connect('swarm-'+code,{serialization:'json',reliable:true});
+    hostConn=pr.connect('swarm-'+code,{serialization:'json',reliable:true});
     to=setTimeout(()=>fail("Couldn't reach that party. Check the code, and that you both have the latest version (hard refresh)."),15000);
     const pcn=hostConn.peerConnection;
     if(pcn) pcn.addEventListener('iceconnectionstatechange',()=>{ if(pcn.iceConnectionState==='failed') fail("Found the party but couldn't open a connection. Try the same wifi, or turn off VPN / school filters."); });
     hostConn.on('open',()=>{
-      clearTimeout(to); isHost=false; screen='game'; state='lobby'; players=[]; syncMenu();
+      clearTimeout(to); if(tok!==joinToken) return; connecting=false; isHost=false; screen='game'; state='lobby'; players=[]; syncMenu();
       hostConn.send({t:'loadout',l:myLoadout()});
-      setInterval(()=>{ if(hostConn.open&&state!=='lobby'){const i=getInput();hostConn.send({t:'in',dx:+i.dx.toFixed(2),dy:+i.dy.toFixed(2)});} },33);
+      clearInterval(inputTimer); inputTimer=setInterval(()=>{ if(hostConn&&hostConn.open&&state!=='lobby'){const i=getInput();hostConn.send({t:'in',dx:+i.dx.toFixed(2),dy:+i.dy.toFixed(2)});} },33);
     });
     hostConn.on('data',onClientData);
     hostConn.on('close',()=>{ if(screen==='game') hostGone(); });
   });
 }
-function hostGone(){
-  screen='menu'; state='menu'; setMsg('Host left the party.',true); syncMenu();
+function leaveToMenu(msg,err){
+  screen='menu'; state='menu'; joinToken++; connecting=false;      // set first so close handlers ignore the teardown
+  clearInterval(inputTimer); inputTimer=null; endJoy(); paused=false;
+  for(const id of Object.keys(conns)){ try{conns[id].close();}catch(e){} delete conns[id]; }
+  const hc=hostConn; hostConn=null; try{ if(hc) hc.close(); }catch(e){}
+  const pr=peer; peer=null; try{ if(pr) pr.destroy(); }catch(e){}
+  partyCode=''; isHost=true; myId='h'; solo=false; dailyOn=false; mod='none'; modPick='none';
+  players=[]; enemies=[]; bullets=[]; ebullets=[]; gems=[]; grenades=[]; fires=[]; turrets=[]; wells=[]; shocks=[]; obj=null; obV=[]; pxV=[]; portal=false;
+  setMsg(msg||'',!!err); syncMenu();
 }
+function hostGone(){ leaveToMenu('Host left the party.',true); }
 
 // ---- client: apply snapshots ----
 let snapAt=0;
@@ -1333,9 +1352,7 @@ function onClientData(s){
   if(s.t!=='s') return;
   if(s.v!==VERSION){
     const theirs=s.v||'old';
-    try{ hostConn.close(); }catch(e){}
-    screen='menu'; state='menu'; syncMenu();
-    setMsg(`Version mismatch (you: ${VERSION}, host: ${theirs}). You BOTH need to hard refresh (Cmd+Shift+R on Mac / Ctrl+Shift+R on PC), then try again.`,true);
+    leaveToMenu(`Version mismatch (you: ${VERSION}, host: ${theirs}). You BOTH need to hard refresh (Cmd+Shift+R on Mac / Ctrl+Shift+R on PC), then try again.`,true);
     return;
   }
   const prev=state;
@@ -1483,6 +1500,8 @@ function syncMenu(){
   const m=me(), inLobby=screen==='game'&&state==='lobby', needStyle=screen==='game'&&!inLobby&&!!m&&m.sty<0;
   $('menu').hidden=!(screen==='menu'||inLobby||needStyle);
   $('mainBox').hidden=screen!=='menu';
+  $('bCancel').hidden=!(connecting&&screen==='menu');
+  $('backRow').hidden=!(inLobby||needStyle);
   $('lobbyBox').hidden=!inLobby;
   $('styleBox').hidden=!(inLobby||needStyle);
   $('modBox').hidden=!inLobby;
@@ -1524,7 +1543,7 @@ function renderArmory(){
   $('armBox').innerHTML=`<h2>ARMORY</h2><div class="coins">${meta.coins} coins</div><div style="font-size:12px;color:rgba(255,255,255,.55)">Earn coins every run. Permanent upgrades apply to all your future runs, in co-op too.</div>
     <h2 style="font-size:14px;margin-top:6px;color:rgba(255,255,255,.55)">PERMANENT UPGRADES</h2>${rows}
     <h2 style="font-size:14px;margin-top:6px;color:rgba(255,255,255,.55)">STARTING RELICS (pick one in the lobby)</h2>${rel}
-    <button id="armClose" class="ghost" style="margin-top:8px">Close</button>`;
+    <button id="armClose" class="ghost" style="margin-top:8px">← Back</button>`;
   $('armBox').querySelectorAll('[data-up]').forEach(b=>b.onclick=()=>{ const d=UPG_DEFS.find(x=>x.k===b.dataset.up), c=costOf(d); if(lvOf(d.k)<d.max&&meta.coins>=c){ meta.coins-=c; meta.lv[d.k]=lvOf(d.k)+1; saveMeta(); refreshMetaUI(); renderArmory(); } });
   $('armBox').querySelectorAll('[data-rel]').forEach(b=>b.onclick=()=>{ const n=b.dataset.rel, c=RELIC_COST[n]; if(!meta.relics[n]&&meta.coins>=c){ meta.coins-=c; meta.relics[n]=true; saveMeta(); refreshMetaUI(); renderArmory(); } });
   $('armClose').onclick=()=>{ $('armory').hidden=true; };
@@ -1545,6 +1564,8 @@ $('bDailyMain').onclick=()=>{ dailyOn=true; startSolo(); };
 $('stylelist').innerHTML=STYLES.map((st,i)=>`<button class="sc" data-i="${i}"><b style="color:${st.col}">${st.n}</b><span>${st.d}</span></button>`).join('');
 document.querySelectorAll('.sc').forEach(b=>b.onclick=()=>pickStyle(+b.dataset.i));
 setInterval(syncMenu,300);
+$('bBack').onclick=()=>leaveToMenu();
+$('bCancel').onclick=()=>leaveToMenu();
 $('bSolo').onclick=()=>{ dailyOn=false; startSolo(); };
 $('bCreate').onclick=()=>createParty();
 $('bJoin').onclick=()=>joinParty($('codeIn').value);
@@ -1997,7 +2018,7 @@ function drawHUD(){
     ctx.fillStyle='#7dffb2';ctx.beginPath();ctx.roundRect(b.resume.x,b.resume.y,b.resume.w,b.resume.h,12);ctx.fill();
     ctx.fillStyle='#07120c';ctx.font=`800 17px ${FONT}`;ctx.fillText('Resume   [Esc]',b.resume.x+b.resume.w/2,b.resume.y+29);
     ctx.fillStyle='#1b1b36';ctx.strokeStyle='rgba(255,255,255,.25)';ctx.lineWidth=1.5;ctx.beginPath();ctx.roundRect(b.leave.x,b.leave.y,b.leave.w,b.leave.h,12);ctx.fill();ctx.stroke();
-    ctx.fillStyle='#fff';ctx.fillText('Leave game',b.leave.x+b.leave.w/2,b.leave.y+29);
+    ctx.fillStyle='#fff';ctx.fillText('← Back to menu',b.leave.x+b.leave.w/2,b.leave.y+29);
     return;
   }
   if(state==='levelup'){
@@ -2031,6 +2052,7 @@ function drawHUD(){
     ctx.fillStyle='#7dffb2';ctx.fillText(isHost?'tap / space to go again':'waiting for host to restart…',W/2,H*.38+115);
     ctx.fillStyle='rgba(255,255,255,.6)';ctx.font=`600 15px ${FONT}`;
     ctx.fillText((isHost?'press C to change style  ·  ':'')+(performance.now()-copiedAt<1800?'result copied!':'press S to copy your result'),W/2,H*.38+142);
+    {const b=endMenuBtn();ctx.fillStyle='#1b1b36';ctx.strokeStyle='rgba(255,255,255,.28)';ctx.lineWidth=1.5;ctx.beginPath();ctx.roundRect(b.x,b.y,b.w,b.h,12);ctx.fill();ctx.stroke();ctx.fillStyle='#fff';ctx.font=`800 16px ${FONT}`;ctx.fillText(touchUI()?'← Main menu':'← Main menu  [M]',b.x+b.w/2,b.y+27);ctx.font=`600 15px ${FONT}`;}
     if(lastCoins>0){ctx.fillStyle='#ffd23f';ctx.font=`800 20px ${FONT}`;ctx.fillText(`+${lastCoins} coins   (total ${meta.coins})`,W/2,H*.38+198);ctx.font=`600 15px ${FONT}`;}
     if(dailyOn){ctx.fillStyle='#ffd23f';ctx.fillText(`DAILY BEST ${mmss(dailyBestNow())}  ·  ${MODS[modIdx()].name}`,W/2,H*.38+166);}
   }
