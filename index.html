@@ -31,6 +31,13 @@
   .sc b{font-size:17px;font-weight:900;letter-spacing:1px}
   .sc span{color:rgba(255,255,255,.65);line-height:1.25}
   .sc.sel{background:#1d1d40;border-color:#fff;opacity:1}
+  #modlist{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .mc{display:flex;flex-direction:column;gap:2px;text-align:left;background:#12122a;color:#fff;border:2px solid rgba(255,255,255,.14);padding:8px 10px;border-radius:10px;font-size:11px;font-weight:500;opacity:.85}
+  .mc b{font-size:13px;font-weight:800;color:#ff9f1c}
+  .mc span{color:rgba(255,255,255,.6);line-height:1.2}
+  .mc.sel{background:#2a2010;border-color:#ff9f1c;opacity:1}
+  .mc.locked{opacity:.4;pointer-events:none}
+  #bDaily.on{background:#ffd23f;color:#1b1500}
 </style>
 <canvas id="c"></canvas>
 <div id="menu">
@@ -39,12 +46,18 @@
     <button id="bCreate">Create party</button>
     <div class="row"><input id="codeIn" maxlength="4" placeholder="CODE" autocomplete="off" autocapitalize="characters"><button id="bJoin" style="width:110px">Join</button></div>
     <button id="bSolo" class="ghost">Play solo</button>
+    <button id="bDailyMain" class="ghost">Daily challenge</button>
     <div id="msg"></div>
   </div>
   <div class="box" id="styleBox" hidden>
     <h2>CHOOSE YOUR STYLE</h2>
     <div id="stylelist"></div>
     <div id="msg2" style="font-size:12px;color:rgba(255,255,255,.5)">Move: WASD / arrows / hold mouse · Dash: Space, Shift, right-click or the DASH button</div>
+  </div>
+  <div class="box" id="modBox" hidden>
+    <h2>RUN MODIFIER</h2>
+    <div id="modlist"></div>
+    <button id="bDaily" class="ghost">Daily challenge: OFF</button>
   </div>
   <div class="box" id="lobbyBox" hidden>
     <div id="partyInfo">
@@ -84,6 +97,22 @@ let lastKillSnd = 0, lastGemSnd = 0, lastBoomSnd = 0, lastZapSnd = 0;
 
 let VERSION='2026-10-09-d';
 let paused=false, pausedBy=0;
+const MODS=[
+  {id:'none',name:'Standard',desc:'No modifier.',coin:1},
+  {id:'elites',name:'Elite Hunt',desc:'Elites everywhere. Big, tough, rewarding.',coin:1.5},
+  {id:'glass',name:'Glass World',desc:'Half max HP, +50% damage.',coin:1.4},
+  {id:'volatile',name:'Chain Blasts',desc:'Every enemy explodes on death. It hurts you too.',coin:1.25},
+  {id:'swift',name:'Fast Forward',desc:'Enemies +30% faster, but XP +30%.',coin:1.3},
+  {id:'dark',name:'Blackout',desc:'You can only see what is close.',coin:1.35},
+  {id:'horde',name:'Endless Horde',desc:'1.7x the enemies, each 40% weaker.',coin:1.3},
+];
+let mod='none', modPick='none', dailyOn=false, copiedAt=0;
+const modIdx=()=>Math.max(0,MODS.findIndex(m=>m.id===mod));
+function dailyInfo(){
+  const d=new Date(), key=`${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
+  let h=2166136261; for(const c of key){h^=c.charCodeAt(0);h=Math.imul(h,16777619);} h>>>=0;
+  return {key,seed:1+(h%1000000000),mod:MODS[1+(h%(MODS.length-1))].id};
+}
 let syn=0, synSeen=0, bossNo=0, shocks=[];
 let obj=null, objCd=40, portal=false, portalProg=0, bonusCoins=0, obV=[], pxV=[];
 const OBJ_NAMES=['CAPTURE THE ZONE','CURSED CHEST','SUPPLY DROP'];
@@ -219,7 +248,7 @@ function resetWorld(){
   enemies=[];bullets=[];ebullets=[];gems=[];parts=[];texts=[];rings=[];grenades=[];fires=[];turrets=[];wells=[];slashes=[];bolts=[];
   t=0;kills=0;xp=0;lvl=1;spawnAcc=0;nextWave=40;nextBoss=100;bossNo=0;syn=0;synSeen=0;shocks=[];obj=null;objCd=40;portal=false;portalProg=0;bonusCoins=0;obV=[];pxV=[];streak=0;eid=0;
   next=needXp(1,players.length); paused=false;
-  genMap(1+Math.floor(Math.random()*1e9)); buildGrid(); fieldT=0;
+  genMap(dailyOn?dailyInfo().seed:1+Math.floor(Math.random()*1e9)); buildGrid(); fieldT=0;
   players=players.map((p,i)=>{
     const q=makePlayer(p.id,p.c,p.n); if(p.sty>=0) applyStyle(q,p.sty); const a=i/players.length*6.283; q.x=Math.cos(a)*30*(players.length>1?1:0); q.y=Math.sin(a)*30*(players.length>1?1:0); return q;
   });
@@ -433,6 +462,7 @@ addEventListener('keydown',e=>{
   if(paused) return;
   if(state==='play' && !e.repeat && (e.code==='Space'||e.code==='ShiftLeft'||e.code==='ShiftRight')) triggerDash();
   if((state==='dead'||state==='won') && isHost && performance.now()-deadAt>600 && (e.code==='Space'||e.code==='Enter'||e.code==='KeyR')) restartGame();
+  if((state==='dead'||state==='won') && e.code==='KeyS') copyResult();
   if((state==='dead'||state==='won') && isHost && e.code==='KeyC' && performance.now()-deadAt>400){ resetWorld(); state='lobby'; syncMenu(); }
   if(state==='levelup' && ['Digit1','Digit2','Digit3'].includes(e.code)) choose(+e.code.slice(5)-1);
   if(state==='levelup' && e.code==='KeyR') reroll();
@@ -571,10 +601,11 @@ function nearestAlive(x,y){
 }
 function spawnEnemy(ti,x,y,hpScale=1,forceEl=0){
   const T=TYPELIST[ti], c=clampArena(x,y,T.r+4);
-  const el=(forceEl||(ti!==6&&Math.random()<Math.min(.12,Math.max(0,(t-60)/1200))))?1:0;
-  const hpm=(1+t/40+(t/200)**2)*(1+.045*(lvl-1))*hpScale*(el?2.4:1);
+  const ec=mod==='elites'?Math.min(.45,.12+t/400):Math.min(.12,Math.max(0,(t-60)/1200));
+  const el=(forceEl||(ti!==6&&Math.random()<ec))?1:0;
+  const hpm=(1+t/40+(t/200)**2)*(1+.045*(lvl-1))*hpScale*(el?2.4:1)*(mod==='horde'?.6:1);
   const hp=T.hp*hpm*(ti===3?.8:1);
-  const en={id:++eid,type:T.name,ti,el,bt:0,mark:0,charge:0,x:c.x,y:c.y,r:T.r*(el?1.22:1),hp,max:hp,spd:T.spd*rnd(.9,1.1)*(1+Math.min(t/300,.5))*(el?1.12:1),
+  const en={id:++eid,type:T.name,ti,el,bt:0,mark:0,charge:0,x:c.x,y:c.y,r:T.r*(el?1.22:1),hp,max:hp,spd:T.spd*rnd(.9,1.1)*(1+Math.min(t/300,.5))*(el?1.12:1)*(mod==='swift'?1.3:1),
                 dmg:T.dmg*(1+t/220)*(el?1.3:1),xp:T.xp*(el?3:1),col:T.col,flash:0,kx:0,ky:0,bladeCd:0,
                 st:0,tm:0,cd:rnd(.5,2.5),cd2:6,dx:0,dy:0,dir:Math.random()<.5?1:-1,aux:0,ang:0,pathT:0,pd:null,tg:null};
   enemies.push(en); return en;
@@ -887,7 +918,7 @@ function simWorld(dt){
   ebullets=ebullets.filter(b=>b.life>0);
 
   // ---- spawning ----
-  const cap=Math.min(420,260+80*np), mult=(1+.65*(al.length-1))*(1+.02*(lvl-1));
+  const cap=Math.min(420,260+80*np), mult=(1+.65*(al.length-1))*(1+.02*(lvl-1))*(mod==='horde'?1.7:1);
   spawnAcc+=dt*(1.2+t/21)*mult;
   while(spawnAcc>=1 && enemies.length<cap){
     spawnAcc--;
@@ -963,6 +994,7 @@ function simWorld(dt){
   for(const e of enemies){
     if(e.hp>0){alive.push(e);continue;}
     kills++;
+    if(mod==='volatile'&&e.ti!==6){ explode(e.x,e.y,55,e.max*.12,null,{skip:e}); for(const q of al) if(!q.dead&&q.inv<=0&&(q.x-e.x)**2+(q.y-e.y)**2<(55+q.r)**2){ q.inv=.35; hurtPlayer(q,6+t/40); pushEv(['ph',rd(q.x),rd(q.y),q.id]); } }
     for(const q of al){ if(q.u.siph&&!q.dead) q.hp=Math.min(q.max,q.hp+.12*q.u.siph); if(q.u.frenzy){ q.frenzyN=Math.min(20,q.frenzyN+1); q.frenzyHold=3; } }
     if(e.boomBy&&e.boomBy.u.chain>0&&e.ti!==6&&!e.boomBy.dead) explode(e.x,e.y,48+14*e.boomBy.u.chain,e.boomBy.dmg*(1+.5*e.boomBy.u.chain),e.boomBy,{skip:e});
     if(e.ti===6){
@@ -985,7 +1017,7 @@ function simWorld(dt){
     if(d<p.r+8){
       g.got=true;
       if(g.heart){p.hp=Math.min(p.max,p.hp+10);pushEv(['heal',rd(p.x),rd(p.y),10]);}
-      else{xp+=g.v/(1+.035*(lvl-1));pushEv(['gp',p.id]);}
+      else{xp+=g.v/(1+.035*(lvl-1))*(mod==='swift'?1.3:1);pushEv(['gp',p.id]);}
     }
   }
   gems=gems.filter(g=>!g.got);
@@ -1060,8 +1092,18 @@ function gameOver(){
   state='dead'; deadAt=performance.now(); pushEv(['over']);
   noteBest();
 }
-function noteBest(){ if(t>best){best=t;try{localStorage.setItem('swarm_best',best)}catch(e){}} }
-function restartGame(){ resetWorld(); state='play'; pushEv(['go']); }
+function noteBest(){
+  if(t>best){best=t;try{localStorage.setItem('swarm_best',best)}catch(e){}}
+  if(dailyOn){ try{ const k='swarm_daily_'+dailyInfo().key; if(t>(+localStorage.getItem(k)||0)) localStorage.setItem(k,t); }catch(e){} }
+}
+function dailyBestNow(){ try{ return +localStorage.getItem('swarm_daily_'+dailyInfo().key)||0; }catch(e){ return 0; } }
+function resultText(){
+  return `SWARM ${dailyOn?'Daily '+dailyInfo().key+' · ':''}${mmss(t)} · level ${lvl} · ${kills} kills · ${MODS[modIdx()].name}${state==='won'?' · EXTRACTED':''}`;
+}
+async function copyResult(){
+  try{ await navigator.clipboard.writeText(resultText()+(inviteLink()?'  '+inviteLink().split('#')[0]:'')); copiedAt=performance.now(); }catch(e){}
+}
+function restartGame(){ resetWorld(); beginRun(); }
 
 function hostStep(dt){
   const m=me(); if(m){const i=getInput(); m.dx=i.dx; m.dy=i.dy;}
@@ -1103,7 +1145,7 @@ function snapshot(){
   const eb=[]; for(const q of ebullets) eb.push(rd(q.x),rd(q.y),rd(q.vx),rd(q.vy));
   const b=[]; for(const q of bullets) b.push(rd(q.x),rd(q.y),rd(q.vx),rd(q.vy),q.c+(q.big?10:0));
   const g=[]; for(const q of gems) g.push(rd(q.x),rd(q.y),q.heart?3:q.v>=5?2:q.v>=2?1:0);
-  return {t:'s',v:VERSION,pz:paused?1:0,pb:pausedBy,st:state,tm:+t.toFixed(2),k:kills,xp,nx:next,lv:lvl,code:partyCode,sd:mapSeed,sn:syn,
+  return {t:'s',v:VERSION,pz:paused?1:0,pb:pausedBy,st:state,tm:+t.toFixed(2),k:kills,xp,nx:next,lv:lvl,code:partyCode,sd:mapSeed,sn:syn,md:modIdx(),mp:modPick,dl:dailyOn?1:0,
     p:players.map(p=>({i:p.id,n:p.n,x:rd(p.x),y:rd(p.y),h:Math.ceil(p.hp),m:p.max,d:p.dead?1:0,iv:p.inv>0?1:0,bl:p.blades,a:+p.ang.toFixed(2),
                        mg:p.magnet,c:p.c,rv:+p.rv.toFixed(2),rs:Math.ceil(p.respT),rr:p.u.reroll,shd:p.shield?1:0,ch:p.chronoT>0?1:0,fn:p.frenzyN,dc:+p.dashCd.toFixed(2),dm:+p.dashMax.toFixed(2),sy:p.sty,dr:p.drones,sp:p.spd,nv:p.nova,wt:p.pc?1:0})),
     en,eb,b,g,gr,fz,tu,wl,sk,ob:oa.ob,px:oa.px,e:netBuf};
@@ -1138,16 +1180,27 @@ function onConn(conn){
 function enterGame(){ screen='game'; players=[]; plCount=0; myId='h'; isHost=true; addPlayer('h'); resetWorld(); }
 
 function startSolo(){ initAudio(); solo=true; enterGame(); state='lobby'; syncMenu(); }
+function applyMod(p){
+  if(mod==='glass'){ p.max=Math.round(p.max*.5); p.hp=p.max; p.dmg*=1.5; }
+}
+function beginRun(){
+  if(dailyOn) mod=dailyInfo().mod;
+  else if(modPick==='random') mod=MODS[1+Math.floor(Math.random()*(MODS.length-1))].id;
+  else mod=modPick;
+  if(dailyOn&&mapSeed!==dailyInfo().seed){ genMap(dailyInfo().seed); buildGrid(); }
+  for(const p of players){ if(p.sty<0) applyStyle(p,0); applyMod(p); }
+  state='play'; pushEv(['go']);
+}
 function setStyleFor(id,i){
   const p=players.find(q=>q.id===id); if(!p||!(i>=0&&i<STYLES.length)) return;
-  if(state==='lobby'||p.sty<0) applyStyle(p,i);
+  if(state==='lobby'||p.sty<0){ applyStyle(p,i); if(state!=='lobby') applyMod(p); }
 }
 function pickStyle(i){
   if(isHost) setStyleFor(myId,i);
   else if(hostConn&&hostConn.open) hostConn.send({t:'style',i});
 }
 function createParty(attempt=0){
-  initAudio(); solo=false;
+  initAudio(); solo=false; dailyOn=false;
   if(typeof Peer==='undefined'){setMsg('Multiplayer library failed to load (offline?)',true);return;}
   setMsg('Creating party…');
   partyCode=genCode();
@@ -1224,6 +1277,7 @@ function onClientData(s){
   ebullets=[]; for(let i=0;i<(s.eb||[]).length;i+=4) ebullets.push({x:s.eb[i],y:s.eb[i+1],vx:s.eb[i+2],vy:s.eb[i+3]});
   if(s.sd!==mapSeed) genMap(s.sd);
   syn=s.sn||0; obV=s.ob||[]; pxV=s.px||[];
+  mod=(MODS[s.md]||MODS[0]).id; modPick=s.mp||'none'; dailyOn=!!s.dl;
   shocks=[]; for(let i=0;i<(s.sk||[]).length;i+=3) shocks.push({x:s.sk[i],y:s.sk[i+1],r:s.sk[i+2]});
   grenades=[]; for(let i=0;i<(s.gr||[]).length;i+=3) grenades.push({x:s.gr[i],y:s.gr[i+1],k:s.gr[i+2]/100});
   fires=[]; for(let i=0;i<(s.fz||[]).length;i+=3) fires.push({x:s.fz[i],y:s.fz[i+1],r:s.fz[i+2]});
@@ -1345,6 +1399,13 @@ function syncMenu(){
   $('mainBox').hidden=screen!=='menu';
   $('lobbyBox').hidden=!inLobby;
   $('styleBox').hidden=!(inLobby||needStyle);
+  $('modBox').hidden=!inLobby;
+  if(inLobby){
+    const di=dailyInfo(), shown=dailyOn?di.mod:modPick;
+    document.querySelectorAll('.mc').forEach(c=>{ c.classList.toggle('sel',c.dataset.m===shown); c.classList.toggle('locked',!isHost||dailyOn); });
+    $('bDaily').hidden=!isHost; $('bDaily').classList.toggle('on',dailyOn);
+    $('bDaily').textContent=dailyOn?`Daily challenge ${di.key}: ON (map + modifier locked)`:'Daily challenge: OFF';
+  }
   if(inLobby){
     $('partyInfo').hidden=solo;
     $('codeBig').textContent=partyCode;
@@ -1359,14 +1420,18 @@ function updateLobbyList(){
   const sm=synMask(players.filter(p=>p.sty>=0).map(p=>p.sty));
   $('plist').innerHTML=players.map(p=>`<div class="pl"><span class="dot" style="background:${css(p.c)}"></span>Player ${p.n}${p.id===myId?' (you)':''} · ${p.sty>=0?STYLES[p.sty].n:'choosing…'}</div>`).join('')+SYN_NAMES.map((nm,i)=>(sm&(1<<i))?`<div style="color:#ffd23f;font-size:12px">◆ ${nm}: ${SYN_DESC[i]}</div>`:'').join('');
 }
+$('modlist').innerHTML=MODS.concat([{id:'random',name:'Random',desc:'A surprise each run.'}]).map(m=>`<button class="mc" data-m="${m.id}"><b>${m.name}</b><span>${m.desc}</span></button>`).join('');
+document.querySelectorAll('.mc').forEach(b=>b.onclick=()=>{ if(isHost&&state==='lobby'&&!dailyOn) modPick=b.dataset.m; });
+$('bDaily').onclick=()=>{ if(isHost&&state==='lobby') dailyOn=!dailyOn; };
+$('bDailyMain').onclick=()=>{ dailyOn=true; startSolo(); };
 $('stylelist').innerHTML=STYLES.map((st,i)=>`<button class="sc" data-i="${i}"><b style="color:${st.col}">${st.n}</b><span>${st.d}</span></button>`).join('');
 document.querySelectorAll('.sc').forEach(b=>b.onclick=()=>pickStyle(+b.dataset.i));
 setInterval(syncMenu,300);
-$('bSolo').onclick=startSolo;
+$('bSolo').onclick=()=>{ dailyOn=false; startSolo(); };
 $('bCreate').onclick=()=>createParty();
 $('bJoin').onclick=()=>joinParty($('codeIn').value);
 $('codeIn').addEventListener('keydown',e=>{if(e.key==='Enter')joinParty($('codeIn').value);});
-$('bStart').onclick=()=>{ for(const p of players) if(p.sty<0) applyStyle(p,0); state='play'; pushEv(['go']); syncMenu(); };
+$('bStart').onclick=()=>{ beginRun(); syncMenu(); };
 $('bCopy').onclick=async()=>{
   const l=inviteLink()||partyCode;
   try{await navigator.clipboard.writeText(l);$('bCopy').textContent='Copied!';}catch(e){$('bCopy').textContent=l;}
@@ -1715,6 +1780,10 @@ function draw(){
   const vg=ctx.createRadialGradient(W/2,H/2,Math.min(W,H)*.32,W/2,H/2,Math.hypot(W,H)*.55);
   vg.addColorStop(0,'rgba(0,0,8,0)');vg.addColorStop(1,'rgba(0,0,8,.62)');
   ctx.fillStyle=vg;ctx.fillRect(0,0,W,H);
+  if(screen==='game'&&mod==='dark'&&state!=='lobby'){
+    const R0=250*Z, gd=ctx.createRadialGradient(W/2,H/2,R0*.5,W/2,H/2,R0*1.5);gd.addColorStop(0,'rgba(0,0,0,0)');gd.addColorStop(1,'rgba(0,0,0,.97)');
+    ctx.fillStyle=gd;ctx.fillRect(0,0,W,H);
+  }
   if(screen==='game') drawHUD();
 }
 function drawHUD(){
@@ -1737,6 +1806,7 @@ function drawHUD(){
     {const sl=synList(syn); ctx.font=`700 11px ${FONT}`; sl.forEach((nm,i)=>{ctx.fillStyle='#ffd23f';ctx.fillText('◆ '+nm,16,(m.fn>0?100:84)+i*14);});}
     if(m.fn>0){ctx.fillStyle='#ffd23f';ctx.font=`800 12px ${FONT}`;ctx.fillText('FRENZY ×'+m.fn,16,84);ctx.font=`600 14px ${FONT}`;ctx.fillStyle='rgba(255,255,255,.7)';}}
   ctx.textAlign='right';ctx.fillText(`best ${mmss(best)}`,W-16,30);
+  if(mod!=='none'||dailyOn){ctx.fillStyle='#ff9f1c';ctx.font=`800 12px ${FONT}`;ctx.fillText((dailyOn?'DAILY · ':'')+MODS[modIdx()].name.toUpperCase(),W-16,68);ctx.font=`600 14px ${FONT}`;ctx.fillStyle='rgba(255,255,255,.7)';}
   if(partyCode&&players.length>1||(partyCode&&!isHost)){ctx.fillText(`party ${partyCode}`,W-16,50);}
   if(m&&m.sty>=0&&!m.dead&&(state==='play'||state==='levelup')){   // dash button + cooldown
     const b=dashBtn(), fr=m.dashMax?1-Math.max(0,m.dashCd||0)/m.dashMax:1, ready=fr>=1;
@@ -1830,7 +1900,9 @@ function drawHUD(){
     ctx.fillText(`survived ${mmss(t)} · ${kills} kills · level ${lvl}`,W/2,H*.38+40);
     ctx.fillStyle=t>=best?'#ffd23f':'rgba(255,255,255,.6)';ctx.fillText(t>=best?'NEW BEST':`best ${mmss(best)}`,W/2,H*.38+70);
     ctx.fillStyle='#7dffb2';ctx.fillText(isHost?'tap / space to go again':'waiting for host to restart…',W/2,H*.38+115);
-    if(isHost){ctx.fillStyle='rgba(255,255,255,.6)';ctx.font=`600 15px ${FONT}`;ctx.fillText('press C to change style',W/2,H*.38+142);}
+    ctx.fillStyle='rgba(255,255,255,.6)';ctx.font=`600 15px ${FONT}`;
+    ctx.fillText((isHost?'press C to change style  ·  ':'')+(performance.now()-copiedAt<1800?'result copied!':'press S to copy your result'),W/2,H*.38+142);
+    if(dailyOn){ctx.fillStyle='#ffd23f';ctx.fillText(`DAILY BEST ${mmss(dailyBestNow())}  ·  ${MODS[modIdx()].name}`,W/2,H*.38+166);}
   }
 }
 function wrap(text,x,y,maxW,lh){
