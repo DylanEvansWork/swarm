@@ -38,6 +38,18 @@
   .mc.sel{background:#2a2010;border-color:#ff9f1c;opacity:1}
   .mc.locked{opacity:.4;pointer-events:none}
   #bDaily.on{background:#ffd23f;color:#1b1500}
+  #armory{position:fixed;inset:0;display:flex;align-items:flex-start;justify-content:center;background:rgba(5,5,12,.95);overflow:auto;padding:20px 0}
+  #armory[hidden]{display:none}
+  #armBox{width:min(520px,92vw);display:flex;flex-direction:column;gap:10px}
+  #armBox h2{font-size:22px;color:#fff;letter-spacing:2px}
+  .coins{font-size:22px;font-weight:900;color:#ffd23f}
+  .arow{display:flex;align-items:center;gap:10px;background:#12122a;border:1.5px solid rgba(255,255,255,.12);border-radius:12px;padding:10px 12px}
+  .arow .t{flex:1;text-align:left;font-size:13px;color:rgba(255,255,255,.65)}
+  .arow .t b{display:block;font-size:15px;color:#fff}
+  .arow button{padding:8px 14px;font-size:14px;border-radius:9px;min-width:92px}
+  .pips{letter-spacing:3px;color:#ffd23f;font-size:12px}
+  #relicPick{display:flex;gap:8px;align-items:center;justify-content:center;font-size:12px;color:rgba(255,255,255,.6)}
+  #relicPick select{background:#12122a;color:#fff;border:1.5px solid rgba(255,255,255,.2);border-radius:8px;padding:6px;font-size:13px}
 </style>
 <canvas id="c"></canvas>
 <div id="menu">
@@ -47,11 +59,13 @@
     <div class="row"><input id="codeIn" maxlength="4" placeholder="CODE" autocomplete="off" autocapitalize="characters"><button id="bJoin" style="width:110px">Join</button></div>
     <button id="bSolo" class="ghost">Play solo</button>
     <button id="bDailyMain" class="ghost">Daily challenge</button>
+    <button id="bArmory" class="ghost">Armory <span id="coinsLine" style="color:#ffd23f;font-weight:900"></span></button>
     <div id="msg"></div>
   </div>
   <div class="box" id="styleBox" hidden>
     <h2>CHOOSE YOUR STYLE</h2>
     <div id="stylelist"></div>
+    <div id="relicPick" hidden>Start with: <select id="rp1"></select><select id="rp2"></select></div>
     <div id="msg2" style="font-size:12px;color:rgba(255,255,255,.5)">Move: WASD / arrows / hold mouse · Dash: Space, Shift, right-click or the DASH button</div>
   </div>
   <div class="box" id="modBox" hidden>
@@ -70,6 +84,7 @@
     <div id="lmsg"></div>
   </div>
 </div>
+<div id="armory" hidden><div id="armBox"></div></div>
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script>
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
@@ -95,7 +110,7 @@ const note = n => 261.63*Math.pow(2,n/12);
 const pent = [0,2,4,7,9,12,14,16,19,21,24,26,28];
 let lastKillSnd = 0, lastGemSnd = 0, lastBoomSnd = 0, lastZapSnd = 0;
 
-let VERSION='2026-10-09-d';
+let VERSION='2026-10-10-e';
 let paused=false, pausedBy=0;
 const MODS=[
   {id:'none',name:'Standard',desc:'No modifier.',coin:1},
@@ -107,6 +122,39 @@ const MODS=[
   {id:'horde',name:'Endless Horde',desc:'1.7x the enemies, each 40% weaker.',coin:1.3},
 ];
 let mod='none', modPick='none', dailyOn=false, copiedAt=0;
+let runId=0, awardedRid=-1, lastCoins=0, runBossKills=0;
+const UPG_DEFS=[
+  {k:'hp',  n:'Toughness',   d:'+10 starting HP per level',      max:5, cost:[40,70,110,160,230]},
+  {k:'spd', n:'Swift Boots', d:'+4% move speed per level',       max:5, cost:[40,70,110,160,230]},
+  {k:'xp',  n:'Scholar',     d:'+8% XP gain per level',          max:5, cost:[50,80,120,180,260]},
+  {k:'rr',  n:'Lucky Start', d:'+1 starting reroll per level',   max:3, cost:[60,120,200]},
+  {k:'mag', n:'Magnetism',   d:'+12% pickup range per level',    max:4, cost:[30,50,80,120]},
+  {k:'dash',n:'Fleet Foot',  d:'-8% dash cooldown per level',    max:4, cost:[50,90,140,200]},
+  {k:'slot',n:'Second Relic Slot', d:'start every run with two relics', max:1, cost:[500]},
+];
+const RELIC_COST={'Gravity Well':180,'Chrono Field':160,'Aegis':200,'Phoenix':260,'Orbital Strike':220,'Frenzy':170,'Berserker':150,'Fortune':120};
+let meta={coins:0,runs:0,lv:{},relics:{},pick:[null,null]};
+try{ const m=JSON.parse(localStorage.getItem('swarm_meta')||'null'); if(m&&typeof m==='object'){ meta=Object.assign(meta,m); meta.lv=meta.lv||{}; meta.relics=meta.relics||{}; meta.pick=meta.pick||[null,null]; } }catch(e){}
+const saveMeta=()=>{ try{ localStorage.setItem('swarm_meta',JSON.stringify(meta)); }catch(e){} };
+const lvOf=k=>meta.lv[k]||0;
+function myLoadout(){
+  const rel=[meta.pick[0],lvOf('slot')?meta.pick[1]:null].filter(n=>n&&meta.relics[n]);
+  return {hp:lvOf('hp')*10,spd:lvOf('spd')*.04,xp:lvOf('xp')*.08,rr:lvOf('rr'),mag:lvOf('mag')*.12,dash:lvOf('dash')*.08,relics:[...new Set(rel)]};
+}
+function cleanLoadout(l){
+  if(!l||typeof l!=='object') return null;
+  const c=(v,mx)=>Math.max(0,Math.min(mx,+v||0));
+  return {hp:c(l.hp,50),spd:c(l.spd,.2),xp:c(l.xp,.4),rr:c(l.rr,3),mag:c(l.mag,.48),dash:c(l.dash,.32),
+          relics:(Array.isArray(l.relics)?l.relics:[]).filter(n=>RELIC_COST[n]).slice(0,2)};
+}
+function awardCoins(){
+  if(awardedRid===runId) return; awardedRid=runId;
+  const m=MODS[modIdx()];
+  let c=Math.floor(t/8)+Math.floor(kills/15)+(lvl-1)*3+runBossKills*10+bonusCoins;
+  c=Math.round(c*m.coin*(state==='won'?2:1));
+  if(dailyOn){ try{ const k='swarm_dailyclaim_'+dailyInfo().key; if(!localStorage.getItem(k)){ c+=25; localStorage.setItem(k,'1'); } }catch(e){} }
+  meta.coins+=c; meta.runs=(meta.runs||0)+1; saveMeta(); lastCoins=c; refreshMetaUI();
+}
 const modIdx=()=>Math.max(0,MODS.findIndex(m=>m.id===mod));
 function dailyInfo(){
   const d=new Date(), key=`${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
@@ -232,6 +280,12 @@ function makePlayer(id,c,n){
 function applyStyle(p,i){
   const S=STYLES[i]; p.sty=i; p.max=p.hp=S.hp; p.rate=p.r0=S.rate; p.dmg=i===0?12:10; p.multi=1; p.pierce=0; p.bspd=520; p.spd=210; p.magnet=80;
   p.nova=0; p.blades=i===2?1:0; p.drones=i===4?3:0; p.u=freshU(); p.dcd=[]; p.fireCd=.5; p.shield=false;p.chronoT=0;p.chCd=6;p.gwCd=5;p.orbCd=4;p.frenzyN=0;p.frenzyHold=0;p.spinT=0;p.bsCd=3;p.volley=0;
+  p.xpm=1; p.dashMul=1;
+  const L=p.loadout;
+  if(L){
+    p.max+=L.hp||0; p.hp=p.max; p.spd*=1+(L.spd||0); p.magnet*=1+(L.mag||0); p.u.reroll+=L.rr||0; p.xpm=1+(L.xp||0); p.dashMul=1-(L.dash||0);
+    for(const nm of (L.relics||[])){ const u=UPGRADES.find(x=>x.n===nm&&x.r===1); if(u) u.f(p); }
+  }
 }
 function addPlayer(id){
   const used=new Set(players.map(p=>p.c)); let c=0; while(used.has(c)) c++;
@@ -247,10 +301,10 @@ function removePlayer(id){
 function resetWorld(){
   enemies=[];bullets=[];ebullets=[];gems=[];parts=[];texts=[];rings=[];grenades=[];fires=[];turrets=[];wells=[];slashes=[];bolts=[];
   t=0;kills=0;xp=0;lvl=1;spawnAcc=0;nextWave=40;nextBoss=100;bossNo=0;syn=0;synSeen=0;shocks=[];obj=null;objCd=40;portal=false;portalProg=0;bonusCoins=0;obV=[];pxV=[];streak=0;eid=0;
-  next=needXp(1,players.length); paused=false;
+  next=needXp(1,players.length); paused=false; runId++; runBossKills=0;
   genMap(dailyOn?dailyInfo().seed:1+Math.floor(Math.random()*1e9)); buildGrid(); fieldT=0;
   players=players.map((p,i)=>{
-    const q=makePlayer(p.id,p.c,p.n); if(p.sty>=0) applyStyle(q,p.sty); const a=i/players.length*6.283; q.x=Math.cos(a)*30*(players.length>1?1:0); q.y=Math.sin(a)*30*(players.length>1?1:0); return q;
+    const q=makePlayer(p.id,p.c,p.n); q.loadout=p.loadout; if(p.sty>=0) applyStyle(q,p.sty); const a=i/players.length*6.283; q.x=Math.cos(a)*30*(players.length>1?1:0); q.y=Math.sin(a)*30*(players.length>1?1:0); return q;
   });
 }
 
@@ -661,7 +715,7 @@ function tryDash(p){
   let dx=p.dx, dy=p.dy;
   if(!dx&&!dy){ const sp=Math.hypot(p.vx,p.vy); if(sp>20){dx=p.vx/sp;dy=p.vy/sp;} else {dx=p.lastDx;dy=p.lastDy;} }
   const m=Math.hypot(dx,dy)||1;
-  p.dashX=dx/m; p.dashY=dy/m; p.dashT=.18; p.dashMax=p.dashCd=2.4*Math.pow(.75,p.u.qdash);
+  p.dashX=dx/m; p.dashY=dy/m; p.dashT=.18; p.dashMax=p.dashCd=2.4*Math.pow(.75,p.u.qdash)*(p.dashMul||1);
   p.inv=Math.max(p.inv,.32); p.dashHit=new Set();
   pushEv(['dash',rd(p.x),rd(p.y),p.id,p.c]);
 }
@@ -1017,7 +1071,7 @@ function simWorld(dt){
     if(d<p.r+8){
       g.got=true;
       if(g.heart){p.hp=Math.min(p.max,p.hp+10);pushEv(['heal',rd(p.x),rd(p.y),10]);}
-      else{xp+=g.v/(1+.035*(lvl-1))*(mod==='swift'?1.3:1);pushEv(['gp',p.id]);}
+      else{xp+=g.v/(1+.035*(lvl-1))*(mod==='swift'?1.3:1)*(p.xpm||1);pushEv(['gp',p.id]);}
     }
   }
   gems=gems.filter(g=>!g.got);
@@ -1087,10 +1141,10 @@ function objArrays(){
   const ob=obj?(obj.type===0?[0,rd(obj.x),rd(obj.y),rd(obj.prog*100),rd(obj.life),obj.r,0,0]:obj.type===1?[1,rd(obj.x),rd(obj.y),0,rd(obj.life),obj.r,obj.opened?1:0,obj.left]:[2,rd(obj.x),rd(obj.y),0,rd(obj.life),obj.r,Math.max(0,Math.ceil(obj.warn)),0]):[];
   return {ob,px:portal?[0,0,rd(portalProg/4*100)]:[]};
 }
-function victory(){ state='won'; deadAt=performance.now(); pushEv(['win']); noteBest(); }
+function victory(){ state='won'; deadAt=performance.now(); pushEv(['win']); noteBest(); awardCoins(); }
 function gameOver(){
   state='dead'; deadAt=performance.now(); pushEv(['over']);
-  noteBest();
+  noteBest(); awardCoins();
 }
 function noteBest(){
   if(t>best){best=t;try{localStorage.setItem('swarm_best',best)}catch(e){}}
@@ -1145,7 +1199,7 @@ function snapshot(){
   const eb=[]; for(const q of ebullets) eb.push(rd(q.x),rd(q.y),rd(q.vx),rd(q.vy));
   const b=[]; for(const q of bullets) b.push(rd(q.x),rd(q.y),rd(q.vx),rd(q.vy),q.c+(q.big?10:0));
   const g=[]; for(const q of gems) g.push(rd(q.x),rd(q.y),q.heart?3:q.v>=5?2:q.v>=2?1:0);
-  return {t:'s',v:VERSION,pz:paused?1:0,pb:pausedBy,st:state,tm:+t.toFixed(2),k:kills,xp,nx:next,lv:lvl,code:partyCode,sd:mapSeed,sn:syn,md:modIdx(),mp:modPick,dl:dailyOn?1:0,
+  return {t:'s',v:VERSION,pz:paused?1:0,pb:pausedBy,st:state,tm:+t.toFixed(2),k:kills,xp,nx:next,lv:lvl,code:partyCode,sd:mapSeed,sn:syn,rid:runId,bc:bonusCoins,md:modIdx(),mp:modPick,dl:dailyOn?1:0,
     p:players.map(p=>({i:p.id,n:p.n,x:rd(p.x),y:rd(p.y),h:Math.ceil(p.hp),m:p.max,d:p.dead?1:0,iv:p.inv>0?1:0,bl:p.blades,a:+p.ang.toFixed(2),
                        mg:p.magnet,c:p.c,rv:+p.rv.toFixed(2),rs:Math.ceil(p.respT),rr:p.u.reroll,shd:p.shield?1:0,ch:p.chronoT>0?1:0,fn:p.frenzyN,dc:+p.dashCd.toFixed(2),dm:+p.dashMax.toFixed(2),sy:p.sty,dr:p.drones,sp:p.spd,nv:p.nova,wt:p.pc?1:0})),
     en,eb,b,g,gr,fz,tu,wl,sk,ob:oa.ob,px:oa.px,e:netBuf};
@@ -1168,6 +1222,7 @@ function onConn(conn){
     const p=players.find(q=>q.id===conn.peer); if(!p||!d) return;
     if(d.t==='in'){const m=Math.hypot(d.dx,d.dy); p.dx=m>1?d.dx/m:+d.dx||0; p.dy=m>1?d.dy/m:+d.dy||0;}
     else if(d.t==='pick') pickFor(conn.peer,d.i);
+    else if(d.t==='loadout'){ p.loadout=cleanLoadout(d.l); if(state==='lobby'&&p.sty>=0) applyStyle(p,p.sty); }
     else if(d.t==='dash'){ if(!paused) tryDash(p); }
     else if(d.t==='pause'){ if(paused) setPaused(false); else if(state==='play') setPaused(true,p.n); }
     else if(d.t==='reroll') rerollFor(conn.peer);
@@ -1177,7 +1232,7 @@ function onConn(conn){
   conn.on('close',gone); conn.on('error',gone);
 }
 
-function enterGame(){ screen='game'; players=[]; plCount=0; myId='h'; isHost=true; addPlayer('h'); resetWorld(); }
+function enterGame(){ screen='game'; players=[]; plCount=0; myId='h'; isHost=true; addPlayer('h').loadout=myLoadout(); resetWorld(); }
 
 function startSolo(){ initAudio(); solo=true; enterGame(); state='lobby'; syncMenu(); }
 function applyMod(p){
@@ -1197,7 +1252,7 @@ function setStyleFor(id,i){
 }
 function pickStyle(i){
   if(isHost) setStyleFor(myId,i);
-  else if(hostConn&&hostConn.open) hostConn.send({t:'style',i});
+  else if(hostConn&&hostConn.open){ hostConn.send({t:'loadout',l:myLoadout()}); hostConn.send({t:'style',i}); }
 }
 function createParty(attempt=0){
   initAudio(); solo=false; dailyOn=false;
@@ -1230,6 +1285,7 @@ function joinParty(code){
     if(pcn) pcn.addEventListener('iceconnectionstatechange',()=>{ if(pcn.iceConnectionState==='failed') fail("Found the party but couldn't open a connection. Try the same wifi, or turn off VPN / school filters."); });
     hostConn.on('open',()=>{
       clearTimeout(to); isHost=false; screen='game'; state='lobby'; players=[]; syncMenu();
+      hostConn.send({t:'loadout',l:myLoadout()});
       setInterval(()=>{ if(hostConn.open&&state!=='lobby'){const i=getInput();hostConn.send({t:'in',dx:+i.dx.toFixed(2),dy:+i.dy.toFixed(2)});} },33);
     });
     hostConn.on('data',onClientData);
@@ -1277,7 +1333,7 @@ function onClientData(s){
   ebullets=[]; for(let i=0;i<(s.eb||[]).length;i+=4) ebullets.push({x:s.eb[i],y:s.eb[i+1],vx:s.eb[i+2],vy:s.eb[i+3]});
   if(s.sd!==mapSeed) genMap(s.sd);
   syn=s.sn||0; obV=s.ob||[]; pxV=s.px||[];
-  mod=(MODS[s.md]||MODS[0]).id; modPick=s.mp||'none'; dailyOn=!!s.dl;
+  mod=(MODS[s.md]||MODS[0]).id; modPick=s.mp||'none'; dailyOn=!!s.dl; runId=s.rid||0; bonusCoins=s.bc||0;
   shocks=[]; for(let i=0;i<(s.sk||[]).length;i+=3) shocks.push({x:s.sk[i],y:s.sk[i+1],r:s.sk[i+2]});
   grenades=[]; for(let i=0;i<(s.gr||[]).length;i+=3) grenades.push({x:s.gr[i],y:s.gr[i+1],k:s.gr[i+2]/100});
   fires=[]; for(let i=0;i<(s.fz||[]).length;i+=3) fires.push({x:s.fz[i],y:s.fz[i+1],r:s.fz[i+2]});
@@ -1286,7 +1342,7 @@ function onClientData(s){
   bullets=[]; for(let i=0;i<s.b.length;i+=5) bullets.push({x:s.b[i],y:s.b[i+1],vx:s.b[i+2],vy:s.b[i+3],c:s.b[i+4]});
   gems=[]; for(let i=0;i<s.g.length;i+=3) gems.push({x:s.g[i],y:s.g[i+1],k:s.g[i+2],heart:s.g[i+2]===3,v:[1,2,5,0][s.g[i+2]]});
   handleEvs(s.e||[]);
-  if(prev!==state){ if(state==='dead'||state==='won'){deadAt=performance.now();noteBest();} syncMenu(); }
+  if(prev!==state){ if(state==='dead'||state==='won'){deadAt=performance.now();noteBest();awardCoins();} syncMenu(); }
   if(screen==='game') updateLobbyList();
 }
 function clientStep(dt){
@@ -1343,7 +1399,7 @@ function handleEvs(list){
       case 'die': burst(e[1],e[2],'#fff',60,420,5); if(e[3]===myId) shake=26; tone(200,.8,'sawtooth',.2,.15); break;
       case 'rev': burst(e[1],e[2],'#7dffb2',40,320,4); rings.push({x:e[1],y:e[2],r:10,max:120,t:0,col:'125,255,178'}); [0,7,12].forEach((n,i)=>setTimeout(()=>tone(note(n),.15,'triangle',.12),i*60)); break;
       case 'over': shake=26; tone(110,.5,'sawtooth',.12); tone(82,.6,'sawtooth',.1); break;
-      case 'go': tone(300,.2,'triangle',.12,2); break;
+      case 'go': runBossKills=0; lastCoins=0; tone(300,.2,'triangle',.12,2); break;
       case 'pause': tone(e[1]?330:520,.12,'triangle',.08); break;
       case 'dash': burst(e[1],e[2],css(e[4]),14,320,4); if(e[3]===myId){tone(520,.12,'sawtooth',.06,2.4);} break;
       case 'toss': tone(220,.12,'square',.05,1.8); break;
@@ -1369,7 +1425,7 @@ function handleEvs(list){
       case 'portal': banner='EXTRACTION OPEN: ALL REACH THE CENTRE'; bannerT=4; [0,7,12,19].forEach((n,i)=>setTimeout(()=>tone(note(n),.3,'sine',.12),i*110)); break;
       case 'win': shake=20; burst(0,0,'#ffd23f',120,700,6); [0,4,7,12,16,19].forEach((n,i)=>setTimeout(()=>tone(note(n),.3,'triangle',.14),i*90)); break;
       case 'bossin': banner='BOSS: '+(e[1]||'INCOMING'); bannerT=2.5; tone(70,.9,'sawtooth',.2,.4); tone(55,1,'square',.1,.5); break;
-      case 'boss': burst(e[1],e[2],'#ff2fd0',90,520,6); burst(e[1],e[2],'#fff',40,380,4); shake=24; banner='BOSS DOWN'; bannerT=2.5; [0,4,7,12,16].forEach((n,i)=>setTimeout(()=>tone(note(n),.25,'triangle',.14),i*80)); break;
+      case 'boss': runBossKills++; burst(e[1],e[2],'#ff2fd0',90,520,6); burst(e[1],e[2],'#fff',40,380,4); shake=24; banner='BOSS DOWN'; bannerT=2.5; [0,4,7,12,16].forEach((n,i)=>setTimeout(()=>tone(note(n),.25,'triangle',.14),i*80)); break;
     }
   }
 }
@@ -1420,6 +1476,37 @@ function updateLobbyList(){
   const sm=synMask(players.filter(p=>p.sty>=0).map(p=>p.sty));
   $('plist').innerHTML=players.map(p=>`<div class="pl"><span class="dot" style="background:${css(p.c)}"></span>Player ${p.n}${p.id===myId?' (you)':''} · ${p.sty>=0?STYLES[p.sty].n:'choosing…'}</div>`).join('')+SYN_NAMES.map((nm,i)=>(sm&(1<<i))?`<div style="color:#ffd23f;font-size:12px">◆ ${nm}: ${SYN_DESC[i]}</div>`:'').join('');
 }
+function refreshMetaUI(){
+  const cl=$('coinsLine'); if(cl) cl.textContent=meta.coins>0?`· ${meta.coins} coins`:'';
+  const unl=Object.keys(meta.relics).filter(n=>meta.relics[n]);
+  const opts=['<option value="">No relic</option>'].concat(unl.map(n=>`<option value="${n}">${n}</option>`)).join('');
+  const cur=[meta.pick[0]||'',meta.pick[1]||''];
+  for(const [i,id] of [[0,'rp1'],[1,'rp2']]){ const el=$(id); if(!el) continue; el.innerHTML=opts; el.value=unl.includes(cur[i])?cur[i]:''; el.style.display=(i===1&&!lvOf('slot'))?'none':''; }
+  $('relicPick').hidden=!unl.length;
+  const ar=$('armory'); if(ar&&!ar.hidden) renderArmory();
+}
+function renderArmory(){
+  const costOf=d=>d.cost[Math.min(lvOf(d.k),d.max-1)];
+  const rows=UPG_DEFS.map(d=>{ const lv=lvOf(d.k), maxed=lv>=d.max, c=costOf(d);
+    return `<div class="arow"><div class="t"><b>${d.n}</b>${d.d}<div class="pips">${'●'.repeat(lv)}${'○'.repeat(d.max-lv)}</div></div><button data-up="${d.k}" ${maxed||meta.coins<c?'disabled':''}>${maxed?'MAX':'Buy · '+c}</button></div>`; }).join('');
+  const rel=Object.keys(RELIC_COST).map(n=>{ const u=UPGRADES.find(x=>x.n===n), own=!!meta.relics[n], c=RELIC_COST[n];
+    return `<div class="arow"><div class="t"><b style="color:#ffd23f">${n}</b>${u?u.d:''}</div><button data-rel="${n}" ${own||meta.coins<c?'disabled':''}>${own?'Owned':'Unlock · '+c}</button></div>`; }).join('');
+  $('armBox').innerHTML=`<h2>ARMORY</h2><div class="coins">${meta.coins} coins</div><div style="font-size:12px;color:rgba(255,255,255,.55)">Earn coins every run. Permanent upgrades apply to all your future runs, in co-op too.</div>
+    <h2 style="font-size:14px;margin-top:6px;color:rgba(255,255,255,.55)">PERMANENT UPGRADES</h2>${rows}
+    <h2 style="font-size:14px;margin-top:6px;color:rgba(255,255,255,.55)">STARTING RELICS (pick one in the lobby)</h2>${rel}
+    <button id="armClose" class="ghost" style="margin-top:8px">Close</button>`;
+  $('armBox').querySelectorAll('[data-up]').forEach(b=>b.onclick=()=>{ const d=UPG_DEFS.find(x=>x.k===b.dataset.up), c=costOf(d); if(lvOf(d.k)<d.max&&meta.coins>=c){ meta.coins-=c; meta.lv[d.k]=lvOf(d.k)+1; saveMeta(); refreshMetaUI(); renderArmory(); } });
+  $('armBox').querySelectorAll('[data-rel]').forEach(b=>b.onclick=()=>{ const n=b.dataset.rel, c=RELIC_COST[n]; if(!meta.relics[n]&&meta.coins>=c){ meta.coins-=c; meta.relics[n]=true; saveMeta(); refreshMetaUI(); renderArmory(); } });
+  $('armClose').onclick=()=>{ $('armory').hidden=true; };
+}
+$('bArmory').onclick=()=>{ $('armory').hidden=false; renderArmory(); };
+for(const id of ['rp1','rp2']) $(id).onchange=()=>{
+  meta.pick=[$('rp1').value||null,$('rp2').value||null]; saveMeta();
+  const mp=players.find(q=>q.id===myId); if(mp) mp.loadout=myLoadout();
+  if(isHost){ if(mp&&mp.sty>=0&&state==='lobby') applyStyle(mp,mp.sty); }
+  else if(hostConn&&hostConn.open) hostConn.send({t:'loadout',l:myLoadout()});
+};
+refreshMetaUI();
 $('modlist').innerHTML=MODS.concat([{id:'random',name:'Random',desc:'A surprise each run.'}]).map(m=>`<button class="mc" data-m="${m.id}"><b>${m.name}</b><span>${m.desc}</span></button>`).join('');
 document.querySelectorAll('.mc').forEach(b=>b.onclick=()=>{ if(isHost&&state==='lobby'&&!dailyOn) modPick=b.dataset.m; });
 $('bDaily').onclick=()=>{ if(isHost&&state==='lobby') dailyOn=!dailyOn; };
@@ -1902,6 +1989,7 @@ function drawHUD(){
     ctx.fillStyle='#7dffb2';ctx.fillText(isHost?'tap / space to go again':'waiting for host to restart…',W/2,H*.38+115);
     ctx.fillStyle='rgba(255,255,255,.6)';ctx.font=`600 15px ${FONT}`;
     ctx.fillText((isHost?'press C to change style  ·  ':'')+(performance.now()-copiedAt<1800?'result copied!':'press S to copy your result'),W/2,H*.38+142);
+    if(lastCoins>0){ctx.fillStyle='#ffd23f';ctx.font=`800 20px ${FONT}`;ctx.fillText(`+${lastCoins} coins   (total ${meta.coins})`,W/2,H*.38+198);ctx.font=`600 15px ${FONT}`;}
     if(dailyOn){ctx.fillStyle='#ffd23f';ctx.fillText(`DAILY BEST ${mmss(dailyBestNow())}  ·  ${MODS[modIdx()].name}`,W/2,H*.38+166);}
   }
 }
