@@ -67,6 +67,7 @@
     <div id="stylelist"></div>
     <div id="relicPick" hidden>Start with: <select id="rp1"></select><select id="rp2"></select></div>
     <div id="msg2" style="font-size:12px;color:rgba(255,255,255,.5)">Move: WASD / arrows / hold mouse · Dash: Space, Shift, right-click or the DASH button</div>
+    <div id="msgTouch" style="font-size:12px;color:rgba(255,255,255,.5)" hidden>Touch: joystick (bottom right) to move · DASH button (bottom left) · ❚❚ to pause</div>
   </div>
   <div class="box" id="modBox" hidden>
     <h2>RUN MODIFIER</h2>
@@ -97,7 +98,7 @@ addEventListener('resize', resize); resize();
 
 // ================= audio =================
 let ac;
-function initAudio(){ if(!ac){ try{ac=new (window.AudioContext||window.webkitAudioContext)()}catch(_){} } }
+function initAudio(){ if(!ac){ try{ac=new (window.AudioContext||window.webkitAudioContext)()}catch(_){} } if(ac&&ac.state==='suspended') ac.resume(); }
 function tone(f, dur=0.1, type='sine', vol=0.1, slide=0){
   if(!ac) return;
   const o = ac.createOscillator(), g = ac.createGain(), t0 = ac.currentTime;
@@ -110,7 +111,7 @@ const note = n => 261.63*Math.pow(2,n/12);
 const pent = [0,2,4,7,9,12,14,16,19,21,24,26,28];
 let lastKillSnd = 0, lastGemSnd = 0, lastBoomSnd = 0, lastZapSnd = 0;
 
-let VERSION='2026-10-10-e';
+let VERSION='2026-10-10-f';
 let paused=false, pausedBy=0;
 const MODS=[
   {id:'none',name:'Standard',desc:'No modifier.',coin:1},
@@ -496,10 +497,25 @@ function triggerDash(){
   m.dashX=dx/mm; m.dashY=dy/mm; m.dashT=.18; m.dashCd=m.dashMax||2.4; m.dashLock=performance.now()+350;
   hostConn.send({t:'dash'});
 }
-const dashBtn=()=>({x:70,y:H-70,r:42});
+const isTouchDev=(window.matchMedia&&matchMedia('(pointer:coarse)').matches)||('ontouchstart' in window);
+let touchSeen=false;
+const touchUI=()=>isTouchDev||touchSeen;
+const joy={id:null,active:false,dx:0,dy:0};
+const dashBtn=()=>touchUI()?{x:78,y:H-100,r:54}:{x:70,y:H-70,r:42};
+const joyBase=()=>({x:W-108,y:H-108,r:68});
+const pauseBtn=()=>({x:W/2,y:H-42,r:22});
+const joyZone=(x,y)=>x>W*.5&&y>H*.4;
+function updateJoy(x,y){
+  const b=joyBase(); let dx=(x-b.x)/b.r, dy=(y-b.y)/b.r; const m=Math.hypot(dx,dy);
+  if(m>1){dx/=m;dy/=m;}
+  if(m<.14){dx=0;dy=0;}
+  joy.dx=dx; joy.dy=dy;
+}
+function endJoy(){ joy.id=null; joy.active=false; joy.dx=0; joy.dy=0; }
 function getInput(){
   let dx=(keys.KeyD||keys.ArrowRight?1:0)-(keys.KeyA||keys.ArrowLeft?1:0);
   let dy=(keys.KeyS||keys.ArrowDown?1:0)-(keys.KeyW||keys.ArrowUp?1:0);
+  if(!dx&&!dy&&joy.active){ dx=joy.dx; dy=joy.dy; }
   if(!dx&&!dy&&ptr.down){
     const px=ptr.x-W/2,py=ptr.y-H/2,d=Math.hypot(px,py);
     if(d>12){dx=px/d;dy=py/d;}
@@ -525,16 +541,30 @@ addEventListener('keyup',e=>keys[e.code]=false);
 cv.addEventListener('contextmenu',e=>{ e.preventDefault(); triggerDash(); });
 cv.addEventListener('pointerdown',e=>{
   e.preventDefault(); initAudio();
+  if(e.pointerType==='touch') touchSeen=true;
   if(screen==='game'&&paused){ const b=pauseBtns(); if(inBtn(b.resume,e.clientX,e.clientY)) togglePause(); else if(inBtn(b.leave,e.clientX,e.clientY)) location.href=location.href.split('#')[0]; return; }
-  if(screen==='game'&&state==='play'){ const b=dashBtn(); if((e.clientX-b.x)**2+(e.clientY-b.y)**2<(b.r+12)**2){ triggerDash(); return; } }
+  if(screen==='game'&&state==='play'){
+    const b=dashBtn(); if((e.clientX-b.x)**2+(e.clientY-b.y)**2<(b.r+12)**2){ triggerDash(); return; }
+    if(touchUI()){
+      const pb=pauseBtn(); if((e.clientX-pb.x)**2+(e.clientY-pb.y)**2<(pb.r+14)**2){ togglePause(); return; }
+      if(e.pointerType==='touch'){
+        if(joy.id===null&&joyZone(e.clientX,e.clientY)){ joy.id=e.pointerId; joy.active=true; updateJoy(e.clientX,e.clientY); try{cv.setPointerCapture(e.pointerId);}catch(_){} }
+        return;   // other touches during play never steer
+      }
+    }
+  }
   if(e.button===2) return;
   ptr.down=true; ptr.x=e.clientX; ptr.y=e.clientY;
   if(screen!=='game') return;
   if((state==='dead'||state==='won') && isHost && performance.now()-deadAt>600) restartGame();
   else if(state==='levelup'){const rb=rerollBtn(); if(e.clientX>=rb.x&&e.clientX<=rb.x+rb.w&&e.clientY>=rb.y&&e.clientY<=rb.y+rb.h){reroll();return;} const i=cardAt(e.clientX,e.clientY); if(i>=0) choose(i);}
 });
-cv.addEventListener('pointermove',e=>{ptr.x=e.clientX;ptr.y=e.clientY; if(state==='levelup') hover=cardAt(e.clientX,e.clientY);});
-addEventListener('pointerup',()=>ptr.down=false);
+cv.addEventListener('pointermove',e=>{
+  if(e.pointerId===joy.id){ updateJoy(e.clientX,e.clientY); return; }
+  ptr.x=e.clientX;ptr.y=e.clientY; if(state==='levelup') hover=cardAt(e.clientX,e.clientY);
+});
+addEventListener('pointerup',e=>{ if(e.pointerId===joy.id) endJoy(); else if(e.pointerType!=='touch'||joy.id===null) ptr.down=false; });
+addEventListener('pointercancel',e=>{ if(e.pointerId===joy.id) endJoy(); ptr.down=false; });
 
 // ================= level-up =================
 function rollCards(p,forceRare){
@@ -1507,6 +1537,7 @@ for(const id of ['rp1','rp2']) $(id).onchange=()=>{
   else if(hostConn&&hostConn.open) hostConn.send({t:'loadout',l:myLoadout()});
 };
 refreshMetaUI();
+if(isTouchDev){ $('msg2').hidden=true; $('msgTouch').hidden=false; }
 $('modlist').innerHTML=MODS.concat([{id:'random',name:'Random',desc:'A surprise each run.'}]).map(m=>`<button class="mc" data-m="${m.id}"><b>${m.name}</b><span>${m.desc}</span></button>`).join('');
 document.querySelectorAll('.mc').forEach(b=>b.onclick=()=>{ if(isHost&&state==='lobby'&&!dailyOn) modPick=b.dataset.m; });
 $('bDaily').onclick=()=>{ if(isHost&&state==='lobby') dailyOn=!dailyOn; };
@@ -1900,7 +1931,18 @@ function drawHUD(){
     ctx.fillStyle='rgba(8,8,20,.65)';ctx.beginPath();ctx.arc(b.x,b.y,b.r,0,6.283);ctx.fill();
     ctx.strokeStyle=ready?'#7dffb2':'rgba(255,255,255,.35)';ctx.lineWidth=5;ctx.beginPath();ctx.arc(b.x,b.y,b.r-4,-1.5708,-1.5708+6.283*fr);ctx.stroke();
     ctx.textAlign='center';ctx.fillStyle=ready?'#fff':'rgba(255,255,255,.5)';ctx.font=`800 15px ${FONT}`;ctx.fillText('DASH',b.x,b.y+2);
-    ctx.font=`600 10px ${FONT}`;ctx.fillStyle='rgba(255,255,255,.55)';ctx.fillText('SPACE',b.x,b.y+17);
+    if(!touchUI()){ctx.font=`600 10px ${FONT}`;ctx.fillStyle='rgba(255,255,255,.55)';ctx.fillText('SPACE',b.x,b.y+17);}
+  }
+  if(touchUI()&&state==='play'&&m&&!m.dead&&m.sty>=0){   // joystick + pause button
+    const jb=joyBase();
+    ctx.fillStyle='rgba(8,8,20,.4)';ctx.beginPath();ctx.arc(jb.x,jb.y,jb.r,0,6.283);ctx.fill();
+    ctx.strokeStyle=joy.active?'rgba(125,255,178,.7)':'rgba(255,255,255,.3)';ctx.lineWidth=3;ctx.stroke();
+    ctx.strokeStyle='rgba(255,255,255,.12)';ctx.beginPath();ctx.arc(jb.x,jb.y,jb.r*.5,0,6.283);ctx.stroke();
+    ctx.fillStyle=joy.active?'rgba(125,255,178,.7)':'rgba(255,255,255,.3)';ctx.beginPath();ctx.arc(jb.x+joy.dx*jb.r*.75,jb.y+joy.dy*jb.r*.75,28,0,6.283);ctx.fill();
+    const pb=pauseBtn();
+    ctx.fillStyle='rgba(8,8,20,.55)';ctx.beginPath();ctx.arc(pb.x,pb.y,pb.r,0,6.283);ctx.fill();
+    ctx.strokeStyle='rgba(255,255,255,.35)';ctx.lineWidth=2;ctx.stroke();
+    ctx.fillStyle='rgba(255,255,255,.75)';ctx.fillRect(pb.x-7,pb.y-8,5,16);ctx.fillRect(pb.x+2,pb.y-8,5,16);
   }
   const boss=enemies.find(e=>e.ti===6);
   if(boss){
@@ -1912,7 +1954,7 @@ function drawHUD(){
   }
   // minimap
   {
-    const mr=Math.min(58,W*.12), mx=W-mr-14, my=H-mr-14, sc=mr/ARENA;
+    const mr=Math.min(58,W*.12), mx=W-mr-14, my=(touchUI()?86:86)+mr, sc=mr/ARENA;
     ctx.fillStyle='rgba(8,8,20,.7)';ctx.beginPath();ctx.arc(mx,my,mr,0,6.283);ctx.fill();
     ctx.strokeStyle='rgba(255,60,90,.7)';ctx.lineWidth=2;ctx.stroke();
     ctx.fillStyle='rgba(90,255,120,.35)';for(const q of pools){ctx.beginPath();ctx.arc(mx+q.x*sc,my+q.y*sc,Math.max(2,q.r*sc),0,6.283);ctx.fill();}
@@ -1975,7 +2017,7 @@ function drawHUD(){
       });
       {const rb=rerollBtn(), n=m.rr||0;
        ctx.fillStyle=n>0?'#1d1d40':'#12121f';ctx.strokeStyle=n>0?'#ffd23f':'rgba(255,255,255,.2)';ctx.lineWidth=2;ctx.beginPath();ctx.roundRect(rb.x,rb.y,rb.w,rb.h,12);ctx.fill();ctx.stroke();
-       ctx.fillStyle=n>0?'#fff':'rgba(255,255,255,.35)';ctx.font=`800 15px ${FONT}`;ctx.textAlign='center';ctx.fillText(`REROLL  ×${n}   [R]`,rb.x+rb.w/2,rb.y+25);}
+       ctx.fillStyle=n>0?'#fff':'rgba(255,255,255,.35)';ctx.font=`800 15px ${FONT}`;ctx.textAlign='center';ctx.fillText(touchUI()?`REROLL  ×${n}`:`REROLL  ×${n}   [R]`,rb.x+rb.w/2,rb.y+25);}
     } else {
       ctx.textAlign='center';ctx.fillStyle='rgba(255,255,255,.8)';ctx.font=`700 20px ${FONT}`;ctx.fillText('waiting for teammates to pick…',W/2,H-60);
     }
@@ -2008,6 +2050,7 @@ function frame(now){
   const dt=Math.min((now-last)/1000,1/30); last=now;
   if(screen==='game'){ if(isHost) hostStep(dt); else if(!paused) clientStep(dt); }
   if(!paused) cosmetic(dt);
+  if(joy.active&&(state!=='play'||paused)) endJoy();
   draw();
   requestAnimationFrame(frame);
 }
