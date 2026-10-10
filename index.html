@@ -138,7 +138,7 @@ const note = n => 261.63*Math.pow(2,n/12);
 const pent = [0,2,4,7,9,12,14,16,19,21,24,26,28];
 let lastKillSnd = 0, lastGemSnd = 0, lastBoomSnd = 0, lastZapSnd = 0;
 
-let VERSION='2026-10-10-l';
+let VERSION='2026-10-10-m';
 let inputTimer=null, hbTimer=null, connecting=false, joinToken=0, reconBusy=false, graceUntil=0, lostAt=0, staleLast=0, staleT=0;
 const RK=Math.random().toString(36).slice(2,12)+Math.random().toString(36).slice(2,8);   // identifies this tab so the host can hand its character back after a drop
 let paused=false, pausedBy=0;
@@ -204,12 +204,13 @@ function loadMetaCode(c){
   }catch(e){ return false; }
 }
 function awardCoins(){
-  if(awardedRid===runId) return; awardedRid=runId;
+  if(awardedRid===runId) return 0; awardedRid=runId;
   const m=MODS[modIdx()];
   let c=Math.floor(t/8)+Math.floor(kills/15)+(lvl-1)*3+runBossKills*10+bonusCoins;
   c=Math.round(c*m.coin*(state==='won'?2:1));
   if(dailyOn){ try{ const k='swarm_dailyclaim_'+dailyInfo().key; if(!localStorage.getItem(k)){ c+=25; localStorage.setItem(k,'1'); } }catch(e){} }
   meta.coins+=c; meta.runs=(meta.runs||0)+1; saveMeta(); lastCoins=c; refreshMetaUI();
+  return c;
 }
 const modIdx=()=>Math.max(0,MODS.findIndex(m=>m.id===mod));
 function dailyInfo(){
@@ -326,7 +327,7 @@ let grenades=[], fires=[], turrets=[], wells=[], slashes=[], bolts=[], solo=fals
 let mapSeed=0, obst=[], pools=[], shrines=[], decor=[], walls=[], nextBoss=100, fieldT=0;
 let t=0, kills=0, xp=0, next=5, lvl=1, spawnAcc=0, nextWave=30, pickT=0, eid=0, plCount=0;
 let shake=0, banner='', bannerT=0, streak=0, streakT=0, deadAt=0;
-let evq=[];
+let evq=[], ping=0, lastSq=0, snapSq=0, lastSend=0, fastConn=null; const fasts={};
 let best=0; try{ best=+localStorage.getItem('swarm_best')||0 }catch(e){}
 best=Math.max(best,(typeof meta!=='undefined'&&meta.best)||0);
 let hover=-1;
@@ -1293,10 +1294,9 @@ function hostStep(dt){
   for(const id in conns){ const q=conns[id].pend; if(q){ q.push(...evq); if(q.length>300) q.splice(0,q.length-300); } }
   evq=[];
   staleT+=dt; if(staleT>1){ staleT=0; sweepStale(); }
-  sendT+=dt;
-  if(sendT>=.05){ sendT=0; sendSnapshots(); }
+  const nowT=performance.now();   // real-time pacing: a slow host frame must not also slow the update rate
+  if(nowT-lastSend>=48){ lastSend=nowT; sendSnapshots(); }
 }
-let sendT=0;
 
 // ================= networking =================
 const ICE={config:{iceServers:[
@@ -1308,39 +1308,43 @@ const ICE={config:{iceServers:[
 const CODE_CHARS='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const genCode=()=>Array.from({length:4},()=>CODE_CHARS[Math.floor(Math.random()*CODE_CHARS.length)]).join('');
 
-function snapshot(){
-  const en=[]; for(const e of enemies) en.push(e.id,rd(e.x),rd(e.y),e.ti,e.flash>0?1:0,Math.max(0,rd(100*e.hp/e.max)),e.aux+(e.mark>0?10:0),e.ti===6?e.bt+1:e.el);
+function snapshot(v){
+  // v = the player we are building this for: only send what is near them (plus the boss); far enemies go as coarse minimap dots
+  let near=()=>true;
+  if(v){ const a=v, b2=(v.dead&&players.find(q=>!q.dead&&q.sty>=0))||v, R2=900*900; near=(x,y)=>(x-a.x)**2+(y-a.y)**2<R2||(x-b2.x)**2+(y-b2.y)**2<R2; }
+  const en=[], fe=[]; for(const e of enemies){ if(e.ti===6||near(e.x,e.y)) en.push(e.id,rd(e.x),rd(e.y),e.ti,e.flash>0?1:0,Math.max(0,rd(100*e.hp/e.max)),e.aux+(e.mark>0?10:0),e.ti===6?e.bt+1:e.el); else fe.push(rd(e.x/8),rd(e.y/8)); }
   const gr=[]; for(const q of grenades) gr.push(rd(q.x),rd(q.y),rd(q.k*100));
   const fz=[]; for(const q of fires) fz.push(rd(q.x),rd(q.y),rd(q.r));
   const tu=[]; for(const q of turrets) tu.push(rd(q.x),rd(q.y),q.c);
   const wl=[]; for(const q of wells) wl.push(rd(q.x),rd(q.y),rd(q.life*10));
   const sk=[]; for(const q of shocks) sk.push(rd(q.x),rd(q.y),rd(q.r));
   const oa=objArrays();
-  const eb=[]; for(const q of ebullets) eb.push(rd(q.x),rd(q.y),rd(q.vx),rd(q.vy));
-  const b=[]; for(const q of bullets) b.push(rd(q.x),rd(q.y),rd(q.vx),rd(q.vy),q.c+(q.big?10:0));
-  const g=[]; for(const q of gems) g.push(rd(q.x),rd(q.y),q.heart?3:q.v>=5?2:q.v>=2?1:0);
+  const eb=[]; for(const q of ebullets) if(near(q.x,q.y)) eb.push(rd(q.x),rd(q.y),rd(q.vx),rd(q.vy));
+  const b=[]; for(const q of bullets) if(near(q.x,q.y)) b.push(rd(q.x),rd(q.y),rd(q.vx),rd(q.vy),q.c+(q.big?10:0));
+  const g=[]; for(const q of gems) if(near(q.x,q.y)) g.push(rd(q.x),rd(q.y),q.heart?3:q.v>=5?2:q.v>=2?1:0);
   return {t:'s',v:VERSION,pz:paused?1:0,pb:pausedBy,st:state,tm:+t.toFixed(2),k:kills,xp,nx:next,lv:lvl,code:partyCode,sd:mapSeed,sn:syn,rid:runId,bc:bonusCoins,md:modIdx(),mp:modPick,dl:dailyOn?1:0,
     p:players.map(p=>({i:p.id,n:p.n,x:rd(p.x),y:rd(p.y),h:Math.ceil(p.hp),m:p.max,d:p.dead?1:0,iv:p.inv>0?1:0,bl:p.blades,a:+p.ang.toFixed(2),
-                       mg:p.magnet,c:p.c,rv:+p.rv.toFixed(2),rs:Math.ceil(p.respT),rr:p.u.reroll,shd:p.shield?1:0,ch:p.chronoT>0?1:0,fn:p.frenzyN,dc:+p.dashCd.toFixed(2),dm:+p.dashMax.toFixed(2),sy:p.sty,dr:p.drones,sp:p.spd,nv:p.nova,wt:p.pc?1:0})),
-    en,eb,b,g,gr,fz,tu,wl,sk,ob:oa.ob,px:oa.px,e:[]};
+                       mg:p.magnet,c:p.c,rv:+p.rv.toFixed(2),rs:Math.ceil(p.respT),rr:p.u.reroll,shd:p.shield?1:0,ch:p.chronoT>0?1:0,fn:p.frenzyN,dc:+p.dashCd.toFixed(2),dm:+p.dashMax.toFixed(2),sy:p.sty,dr:p.drones,sp:p.spd,nv:p.nova,wt:p.pc?1:0,pg:Math.round(p.ping||0)})),
+    en,fe,eb,b,g,gr,fz,tu,wl,sk,ob:oa.ob,px:oa.px,e:[]};
 }
 function sendSnapshots(){
   const ids=Object.keys(conns); if(!ids.length) return;
-  const s=snapshot();
+  snapSq++;
   for(const id of ids){
     const c=conns[id]; if(!c.open) continue;
-    const dc=c.dataChannel;
-    if(dc&&dc.bufferedAmount>262144) continue;   // their link is backed up: skip this frame (events stay queued) instead of piling on
-    const p=players.find(q=>q.id===id);
-    const o=Object.assign({},s,{e:c.pend||[]}); if(p&&p.pc){ o.pc=p.pc; o.pl=p.pc.map(i=>lvlText(UPGRADES[i],p)); }
-    c.pend=[];
-    try{ c.send(o); }catch(err){ dropConn(id,c); }
+    const f=fasts[id], ch=(f&&f.open)?f:c, dc=ch.dataChannel;
+    if(dc&&dc.bufferedAmount>40000){ c.skipped=(c.skipped||0)+1; continue; }   // link is backed up: send nothing rather than queue stale frames (events stay queued)
+    const p=players.find(q=>q.id===id), nowS=performance.now(), pg=(p&&p.ping)||0, gap=pg>180?96:pg>110?64:0;   // laggy link: fewer, fresher snapshots
+    if(gap&&nowS-(c.lastS||0)<gap-6) continue; c.lastS=nowS;
+    const o=snapshot(p||null); o.sq=snapSq; o.e=c.pend||[]; c.pend=[];
+    if(p&&p.pc){ o.pc=p.pc; o.pl=p.pc.map(i=>lvlText(UPGRADES[i],p)); }
+    try{ ch.send(o); }catch(err){ if(ch===c) dropConn(id,c); }
   }
 }
-// a dead link must not silently delete someone's run: mid-run drops keep the character (as a downed ghost) for 90s so they can rejoin in place
 function dropConn(id,c){
   if(conns[id]!==c) return;
   delete conns[id]; try{c.close();}catch(e){}
+  { const f=fasts[id]; if(f){ delete fasts[id]; try{f.close();}catch(e){} } }
   const p=players.find(q=>q.id===id); if(!p) return;
   if(!p.rk||state==='lobby'||state==='dead'||state==='won'||p.sty<0){ removePlayer(id); return; }
   if(p.pc) pickFor(id,Math.floor(Math.random()*3));
@@ -1364,6 +1368,7 @@ function adoptHello(conn,d){
   const old=k&&players.find(q=>q.rk===k&&q.id!==conn.peer);
   if(old){   // same tab coming back: hand its character over
     const oc=conns[old.id]; if(oc&&oc!==conn){ delete conns[old.id]; try{oc.close();}catch(e){} }
+    { const ofc=fasts[old.id]; if(ofc){ delete fasts[old.id]; try{ofc.close();}catch(e){} } }
     if(nw){ players=players.filter(q=>q!==nw); if(nw.n===plCount) plCount--; }
     old.id=conn.peer; conns[conn.peer]=conn; conn.pend=conn.pend||[]; conn.seen=performance.now(); conn.full=false;
     if(d.l) old.loadout=cleanLoadout(d.l);
@@ -1372,7 +1377,19 @@ function adoptHello(conn,d){
   }
   if(nw){ if(k) nw.rk=k; if(d.l){ nw.loadout=cleanLoadout(d.l); if(state==='lobby'&&nw.sty>=0) applyStyle(nw,nw.sty); } }
 }
+function applyIn(id,d){
+  const p=players.find(q=>q.id===id); if(!p||p.away) return;
+  if(d.sq!==undefined){ if(d.sq<=(p.inSq||0)) return; p.inSq=d.sq; }   // unordered channel: ignore an input that arrives after a newer one
+  const m=Math.hypot(d.dx,d.dy); p.dx=m>1?d.dx/m:+d.dx||0; p.dy=m>1?d.dy/m:+d.dy||0;
+}
 function onConn(conn){
+  if(conn.label==='fast'){   // optional second channel: unordered, so one lost packet can't freeze the whole stream
+    conn.on('open',()=>{ fasts[conn.peer]=conn; });
+    conn.on('data',d=>{ if(d&&d.t==='in'){ const c=conns[conn.peer]; if(c) c.seen=performance.now(); applyIn(conn.peer,d); } });
+    conn.on('close',()=>{ if(fasts[conn.peer]===conn) delete fasts[conn.peer]; });
+    conn.on('error',()=>{});
+    return;
+  }
   conn.on('open',()=>{
     conn.pend=[]; conn.seen=performance.now();
     if(players.length>=6){   // maybe a rejoin from a held slot: give its hello a moment before refusing
@@ -1386,9 +1403,9 @@ function onConn(conn){
     if(!d) return;
     conn.seen=performance.now();
     if(d.t==='hello') return adoptHello(conn,d);
-    if(d.t==='hb') return;
+    if(d.t==='hb'){ const q=players.find(x=>x.id===conn.peer); if(q&&d.p>=0&&d.p<10000) q.ping=+d.p; try{ conn.send({t:'pong',c:d.c}); }catch(e){} return; }
     const p=players.find(q=>q.id===conn.peer); if(!p) return;
-    if(d.t==='in'){const m=Math.hypot(d.dx,d.dy); p.dx=m>1?d.dx/m:+d.dx||0; p.dy=m>1?d.dy/m:+d.dy||0;}
+    if(d.t==='in') applyIn(conn.peer,d);
     else if(d.t==='pick') pickFor(conn.peer,d.i);
     else if(d.t==='loadout'){ p.loadout=cleanLoadout(d.l); if(state==='lobby'&&p.sty>=0) applyStyle(p,p.sty); }
     else if(d.t==='dash'){ if(!paused) tryDash(p); }
@@ -1402,7 +1419,7 @@ function onConn(conn){
   if(pcn) pcn.addEventListener('iceconnectionstatechange',()=>{ if(pcn.iceConnectionState==='failed') dropConn(conn.peer,conn); });
 }
 
-function enterGame(){ screen='game'; players=[]; plCount=0; myId='h'; isHost=true; addPlayer('h').loadout=myLoadout(); resetWorld(); }
+function enterGame(){ ensureHiddenTick(); screen='game'; players=[]; plCount=0; myId='h'; isHost=true; addPlayer('h').loadout=myLoadout(); resetWorld(); }
 
 function startSolo(){ initAudio(); solo=true; enterGame(); state='lobby'; syncMenu(); }
 function applyMod(p){
@@ -1460,7 +1477,7 @@ function joinParty(code){
     hostConn.on('open',()=>{
       clearTimeout(to); if(tok!==joinToken) return; connecting=false; isHost=false; screen='game'; state='lobby'; players=[]; syncMenu();
       hostConn.send({t:'hello',k:RK,l:myLoadout()});
-      snapAt=performance.now(); startClientTimers();
+      snapAt=performance.now(); lastSq=0; startClientTimers(); openFast(pr);
     });
     const hc0=hostConn;
     hostConn.on('data',onClientData);
@@ -1468,8 +1485,10 @@ function joinParty(code){
   });
 }
 function leaveToMenu(msg,err){
+  let banked=0; if(screen==='game'&&(state==='play'||state==='levelup'||state==='dead'||state==='won')&&t>=8) banked=awardCoins();
+  if(banked>0) msg=(msg?msg+'  ':'')+`+${banked} coins banked.`;
   screen='menu'; state='menu'; joinToken++; connecting=false;      // set first so close handlers ignore the teardown
-  clearInterval(inputTimer); inputTimer=null; clearInterval(hbTimer); hbTimer=null; reconBusy=false; endJoy(); paused=false;
+  clearInterval(inputTimer); inputTimer=null; clearInterval(hbTimer); hbTimer=null; reconBusy=false; closeFast(); for(const id of Object.keys(fasts)){ try{fasts[id].close();}catch(e){} delete fasts[id]; } lastSq=0; ping=0; endJoy(); paused=false;
   for(const id of Object.keys(conns)){ const c=conns[id]; try{c.send({t:'bye'});}catch(e){} setTimeout(()=>{try{c.close();}catch(e){}},200); delete conns[id]; }
   const hc=hostConn; hostConn=null; try{ if(hc) hc.close(); }catch(e){}
   const pr=peer; peer=null; setTimeout(()=>{try{ if(pr) pr.destroy(); }catch(e){}},300);
@@ -1478,9 +1497,22 @@ function leaveToMenu(msg,err){
   setMsg(msg||'',!!err); syncMenu();
 }
 function hostGone(){ leaveToMenu('Host left the party.',true); }
+function closeFast(){ const f=fastConn; fastConn=null; try{ if(f) f.close(); }catch(e){} }
+function openFast(pr){
+  closeFast();
+  try{
+    const fc=pr.connect('swarm-'+partyCode,{label:'fast',serialization:'json',reliable:false});
+    fastConn=fc; fc.on('data',onClientData);
+    fc.on('close',()=>{ if(fastConn===fc) fastConn=null; }); fc.on('error',()=>{ if(fastConn===fc) fastConn=null; });
+  }catch(e){ fastConn=null; }
+}
 function startClientTimers(){
-  clearInterval(inputTimer); inputTimer=setInterval(()=>{ if(hostConn&&hostConn.open&&state!=='lobby'){const i=getInput();hostConn.send({t:'in',dx:+i.dx.toFixed(2),dy:+i.dy.toFixed(2)});} },33);
-  clearInterval(hbTimer); hbTimer=setInterval(()=>{ if(hostConn&&hostConn.open) hostConn.send({t:'hb'}); },1000);
+  clearInterval(inputTimer); inputTimer=setInterval(()=>{
+    if(!(hostConn&&hostConn.open)||state==='lobby') return;
+    const i=getInput(), ch=(fastConn&&fastConn.open)?fastConn:hostConn;
+    try{ ch.send({t:'in',dx:+i.dx.toFixed(2),dy:+i.dy.toFixed(2),sq:Math.round(performance.now())}); }catch(e){}
+  },33);
+  clearInterval(hbTimer); hbTimer=setInterval(()=>{ if(hostConn&&hostConn.open) hostConn.send({t:'hb',c:performance.now(),p:Math.round(ping)}); },1000);
 }
 // the link to the host died (or went quiet): keep the game on screen and keep trying to slide back into the same character
 function clientLost(){
@@ -1492,7 +1524,7 @@ function clientWatchdog(){ if(screen==='game'&&!isHost&&!solo&&!reconBusy&&hostC
 setInterval(clientWatchdog,1000);
 function tryRejoin(){
   const tok=joinToken; if(!reconBusy||tok!==joinToken||screen!=='game') return;
-  const oh=hostConn; hostConn=null; try{ if(oh) oh.close(); }catch(e){}
+  closeFast(); const oh=hostConn; hostConn=null; try{ if(oh) oh.close(); }catch(e){}
   const op=peer; peer=null; try{ if(op) op.destroy(); }catch(e){}
   clearInterval(inputTimer); clearInterval(hbTimer);
   let done=false, to=null;
@@ -1512,7 +1544,7 @@ function tryRejoin(){
     hc.on('open',()=>{
       if(done||tok!==joinToken){ return; }
       done=true; clearTimeout(to); reconBusy=false; myId=id; snapAt=performance.now();
-      hc.send({t:'hello',k:RK,l:myLoadout()}); startClientTimers();
+      hc.send({t:'hello',k:RK,l:myLoadout()}); startClientTimers(); openFast(pr);
     });
     hc.on('data',onClientData);
     hc.on('close',()=>{ if(hc===hostConn&&screen==='game'&&!reconBusy) clientLost(); else if(hc===hostConn&&!done) bad(); });
@@ -1520,10 +1552,11 @@ function tryRejoin(){
 }
 
 // ---- client: apply snapshots ----
-let snapAt=0;
+let snapAt=0, farE=[];
 function onClientData(s){
   if(s.t==='full'){hostGone();setMsg('Party is full (6 max).',true);return;}
   if(s.t==='bye'){ hostGone(); return; }
+  if(s.t==='pong'){ const r=performance.now()-s.c; if(r>=0&&r<10000) ping=ping?ping*.7+r*.3:r; return; }
   if(s.t!=='s') return;
   snapAt=performance.now();
   if(s.v!==VERSION){
@@ -1531,6 +1564,8 @@ function onClientData(s){
     leaveToMenu(`Version mismatch (you: ${VERSION}, host: ${theirs}). You BOTH need to hard refresh (Cmd+Shift+R on Mac / Ctrl+Shift+R on PC), then try again.`,true);
     return;
   }
+  if(s.sq!==undefined){ if(s.sq<=lastSq){ handleEvs(s.e||[]); return; } lastSq=s.sq; }   // stale (reordered) snapshot: keep its events, skip its state
+  if(runId&&s.rid&&s.rid!==runId&&awardedRid!==runId&&t>=8) awardCoins();   // the run we were in ended while we weren't looking: pay it out
   const prev=state;
   paused=!!s.pz; pausedBy=s.pb||0;
   state=s.st; t=s.tm; kills=s.k; xp=s.xp; next=s.nx; lvl=s.lv; partyCode=s.code||partyCode;
@@ -1538,7 +1573,7 @@ function onClientData(s){
   const old=new Map(players.map(p=>[p.id,p])), np=[];
   for(const q of s.p){
     const p=old.get(q.i)||{id:q.i,x:q.x,y:q.y,vx:0,vy:0,dx:0,dy:0,ang:q.a};
-    Object.assign(p,{n:q.n,tx:q.x,ty:q.y,hp:q.h,max:q.m,dead:!!q.d,inv:q.iv?1:0,blades:q.bl,magnet:q.mg,c:q.c,rv:q.rv,rs:q.rs,sty:q.sy,drones:q.dr,spd:q.sp,nova:q.nv,r:10,pc:q.i===myId?(s.pc||null):null,pl:q.i===myId?(s.pl||null):null});
+    Object.assign(p,{n:q.n,tx:q.x,ty:q.y,hp:q.h,max:q.m,dead:!!q.d,inv:q.iv?1:0,blades:q.bl,magnet:q.mg,c:q.c,rv:q.rv,rs:q.rs,sty:q.sy,drones:q.dr,spd:q.sp,nova:q.nv,r:10,pc:q.i===myId?(s.pc||null):null,pl:q.i===myId?(s.pl||null):null,ping:q.pg||0});
     if(Math.abs(q.a-p.ang)>.6) p.ang=q.a;
     p.rr=q.rr; p.shd=q.shd; p.ch=q.ch; p.fn=q.fn;
     p.dashMax=q.dm; if(q.i!==myId||performance.now()>(p.dashLock||0)) p.dashCd=q.dc;
@@ -1552,7 +1587,7 @@ function onClientData(s){
     e.tx=a[i+1];e.ty=a[i+2];e.flash=a[i+4]?1:0;e.hp=a[i+5];e.max=100;e.aux=a[i+6]%10;e.mk=a[i+6]>=10;e.el=a[i+7];
     ne.push(e);
   }
-  enemies=ne;
+  enemies=ne; farE=s.fe||[];
   ebullets=[]; for(let i=0;i<(s.eb||[]).length;i+=4) ebullets.push({x:s.eb[i],y:s.eb[i+1],vx:s.eb[i+2],vy:s.eb[i+3]});
   if(s.sd!==mapSeed) genMap(s.sd);
   syn=s.sn||0; obV=s.ob||[]; pxV=s.px||[];
@@ -1580,8 +1615,9 @@ function clientStep(dt){
         else { p.vx+=(i.dx*p.spd*sm-p.vx)*k; p.vy+=(i.dy*p.spd*sm-p.vy)*k; p.x+=p.vx*dt; p.y+=p.vy*dt; }
         pushOut(p);
       }
-      const ex=p.tx-p.x, ey=p.ty-p.y, err=Math.hypot(ex,ey);
-      const g=err>200?1:err>25?Math.min(1,dt*5):0;
+      // the host's position is ~half an RTT old: aim at where it *will* be, so steady running never fights the correction
+      const lag=Math.min(.35,(ping||80)/2000+.03), ex=p.tx+(p.dashT>0?0:p.vx)*lag-p.x, ey=p.ty+(p.dashT>0?0:p.vy)*lag-p.y, err=Math.hypot(ex,ey);
+      const g=err>220?1:err>45?Math.min(1,dt*4):0;
       p.x+=ex*g; p.y+=ey*g;
     } else { const k=Math.min(1,dt*18); p.x+=(p.tx-p.x)*k; p.y+=(p.ty-p.y)*k; }
     if(p.blades||p.drones) p.ang+=dt*(p.drones?2.4:3.2+p.blades*.2);
@@ -2182,6 +2218,7 @@ function drawHUD(){
     ctx.fillStyle='rgba(150,160,255,.45)';for(const w of walls) if(!w.crate) ctx.fillRect(mx+w.x*sc,my+w.y*sc,Math.max(1,w.w*sc),Math.max(1,w.h*sc));
     ctx.fillStyle='rgba(150,160,255,.5)';for(const o of obst){ctx.beginPath();ctx.arc(mx+o.x*sc,my+o.y*sc,Math.max(1.2,o.r*sc),0,6.283);ctx.fill();}
     ctx.fillStyle='rgba(255,90,110,.55)';for(const e of enemies) if(e.ti!==6) ctx.fillRect(mx+e.x*sc-1,my+e.y*sc-1,2,2);
+    for(let i=0;i<farE.length;i+=2) ctx.fillRect(mx+farE[i]*8*sc-1,my+farE[i+1]*8*sc-1,2,2);
     if(boss){ctx.fillStyle='#ff2fd0';ctx.beginPath();ctx.arc(mx+boss.x*sc,my+boss.y*sc,4,0,6.283);ctx.fill();}
     for(const p of players){ctx.fillStyle=p.dead?'#777':css(p.c);ctx.beginPath();ctx.arc(mx+p.x*sc,my+p.y*sc,3,0,6.283);ctx.fill();}
   }
@@ -2205,6 +2242,10 @@ function drawHUD(){
   }
   if(streak>=5&&state==='play'){ctx.textAlign='center';ctx.textAlign='left';ctx.fillStyle='#ffd23f';ctx.font=`800 ${F(16,12)}px ${FONT}`;ctx.fillText(`${streak} streak`,W/2+Math.round(F(34,22)*1.55),ty-2);}
   if(bannerT>0){ctx.textAlign='center';ctx.globalAlpha=Math.min(1,bannerT);ctx.fillStyle='#ff4d6d';ctx.font=`900 ${F(36,22)}px ${FONT}`;ctx.fillText(banner,W/2,ny+F(34,22));ctx.globalAlpha=1;}
+  if(players.length>1){   // connection quality, tiny, bottom centre: yours as a client, everyone's as host
+    const lines=isHost?players.filter(p=>p.id!==myId&&p.ping>0).map(p=>`P${p.n} ${p.ping}ms`):(ping>0?[`ping ${Math.round(ping)}ms`]:[]);
+    if(lines.length){ const worst=isHost?Math.max(...players.map(p=>p.ping||0)):ping; ctx.textAlign='center';ctx.font=`600 ${F(11,9)}px ${FONT}`;ctx.fillStyle=worst>200?'#ff7a8e':worst>110?'#ffd23f':'rgba(255,255,255,.4)';ctx.fillText(lines.join('  ·  '),W/2,H-6); }
+  }
   if(m&&m.dead&&state==='play'){ctx.textAlign='center';ctx.fillStyle='#ff7a8e';ctx.font=`800 ${F(22,14)}px ${FONT}`;ctx.fillText(`DOWN — respawning in ${m.rs||0}s`+(W>520?' (or a teammate can stand on you)':''),W/2,H-Math.round(86*ck()));}
 
   if(paused){
@@ -2275,15 +2316,27 @@ function wrap(text,x,y,maxW,lh){
 
 // ================= loop =================
 let last=performance.now();
-function frame(now){
+function tick(now,visible){
   const dt=Math.min((now-last)/1000,1/30); last=now;
   if(screen==='game'){ if(isHost) hostStep(dt); else if(!paused) clientStep(dt); }
+  if(!visible) return;
   if(!paused) cosmetic(dt);
   if(joy.active&&(state!=='play'||paused)) endJoy();
   draw();
-  requestAnimationFrame(frame);
 }
+function frame(now){ tick(now,true); requestAnimationFrame(frame); }
 requestAnimationFrame(frame);
+// browsers stop requestAnimationFrame for hidden/covered tabs, which would freeze the whole party if the host alt-tabs.
+// A worker timer isn't throttled, so a hidden host keeps simulating and sending (rendering is skipped).
+let tickWorker=null;
+function ensureHiddenTick(){
+  if(tickWorker||typeof Worker==='undefined') return;
+  try{
+    tickWorker=new Worker(URL.createObjectURL(new Blob(['setInterval(()=>postMessage(0),33)'],{type:'text/javascript'})));
+    tickWorker.onmessage=()=>{ if(document.hidden&&isHost&&!solo&&screen==='game') tick(performance.now(),false); };
+  }catch(e){ tickWorker=null; }
+}
+addEventListener('pagehide',()=>{ if(screen==='game'&&(state==='play'||state==='levelup'||state==='dead'||state==='won')&&t>=8) awardCoins(); });
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden) graceUntil=performance.now()+2500; if(document.hidden&&solo&&screen==='game'&&state==='play'&&!paused) setPaused(true,1); });
 window.__swarm={get state(){return {screen,state,isHost,partyCode,players:players.length,enemies:enemies.length,t,myId}}, joinParty, createParty};
 // auto-update: if the deployed page is newer than this (possibly cached) copy, reload once
